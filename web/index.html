@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manim Studio - Professional Edition</title>
+    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="monaco/vs/editor/editor.main.css">
+    <link rel="stylesheet" href="app_features.css?v=2025-01-26-v13">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="xterm/xterm.css">
+    <style>
+        /* Terminal auto-sizing - fills container like HTML */
+        #terminalContainer {
+            display: flex;
+            flex-direction: column;
+            box-sizing: border-box;
+        }
+
+        #terminalContainer .xterm {
+            flex: 1;
+            height: 100% !important;
+            width: 100% !important;
+        }
+
+        #terminalContainer .xterm-viewport {
+            overflow-y: scroll !important;
+            width: 100% !important;
+        }
+
+        #terminalContainer .xterm-screen {
+            width: 100% !important;
+        }
+    </style>
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="header-left">
+            <div class="logo">🎬</div>
+            <div class="title-section">
+                <h1 class="app-title">Manim Animation Studio</h1>
+                <span class="app-subtitle">Professional Edition v1.0.3.0</span>
+            </div>
+        </div>
+
+        <div class="header-center">
+            <button class="action-btn" id="newFileBtn" title="New File">
+                <i class="fas fa-file"></i>
+                <span>New</span>
+            </button>
+            <button class="action-btn" id="openFileBtn" title="Open File">
+                <i class="fas fa-folder-open"></i>
+                <span>Open</span>
+            </button>
+            <button class="action-btn" id="saveFileBtn" title="Save File">
+                <i class="fas fa-save"></i>
+                <span>Save</span>
+            </button>
+            <div class="divider"></div>
+            <button class="action-btn primary" id="renderBtn" title="Render Animation (F5)">
+                <i class="fas fa-play"></i>
+                <span>Render</span>
+            </button>
+            <button class="action-btn" id="previewBtn" title="Quick Preview (F6)">
+                <i class="fas fa-eye"></i>
+                <span>Preview</span>
+            </button>
+            <button class="action-btn danger" id="stopBtn" title="Stop Render" style="display: none;">
+                <i class="fas fa-stop"></i>
+                <span>Stop</span>
+            </button>
+        </div>
+
+        <div class="header-right">
+            <button class="status-btn" id="latexStatusBtn" title="LaTeX Status - Checking...">
+                <span class="status-dot checking"></span>
+                <span class="status-text">LaTeX</span>
+            </button>
+            <button class="icon-btn" id="settingsBtn" title="Settings">
+                <i class="fas fa-cog"></i>
+            </button>
+            <button class="icon-btn" id="themeBtn" title="Toggle Theme">
+                <i class="fas fa-moon"></i>
+            </button>
+            <button class="icon-btn" id="helpBtn" title="Help">
+                <i class="fas fa-question-circle"></i>
+            </button>
+        </div>
+    </header>
+
+    <div class="app-container">
+        <div class="layout">
+            <section class="content">
+                <div class="tab-header">
+                    <button class="tab-pill active" data-tab="workspace"><i class="fas fa-desktop"></i> Workspace</button>
+                    <button class="tab-pill" data-tab="system"><i class="fas fa-info-circle"></i> System</button>
+                    <button class="tab-pill" data-tab="assets"><i class="fas fa-images"></i> Assets</button>
+                </div>
+
+                <div class="tab-panel active" id="workspace-panel">
+                    <div class="workspace-container">
+                        <!-- Main Content Area -->
+                        <div class="workspace-main-content">
+                        <!-- Top Section: Editor and Preview Side by Side -->
+                        <div class="workspace-top" id="workspaceTop">
+                            <!-- Code Editor -->
+                            <div class="workspace-editor" id="workspaceEditor">
+                                <div class="workspace-header">
+                                    <h2><i class="fas fa-code"></i> Code Editor</h2>
+                                    <div class="workspace-tools">
+                                        <label class="workspace-control">
+                                            <span>Font Size</span>
+                                            <select id="fontSizeSelect">
+                                                <option value="12">12px</option>
+                                                <option value="14" selected>14px</option>
+                                                <option value="16">16px</option>
+                                                <option value="18">18px</option>
+                                                <option value="20">20px</option>
+                                            </select>
+                                        </label>
+                                    </div>
+                                </div>
+                                <div class="workspace-body">
+                                    <div id="monacoEditor" style="width:100%;height:100%;"></div>
+                                </div>
+                            </div>
+
+                            <!-- Vertical Resize Handle -->
+                            <div class="workspace-divider-v" id="verticalResizeHandle"></div>
+
+                            <!-- Preview Panel -->
+                            <div class="workspace-preview" id="workspacePreview">
+                                <!-- Header -->
+                                <div class="workspace-header">
+                                    <h2><i class="fas fa-play-circle"></i> Preview</h2>
+                                </div>
+
+                                <!-- Preview Viewport Container -->
+                                <div class="workspace-body">
+                                    <!-- File Info Bar -->
+                                    <div class="preview-info-bar">
+                                        <div class="preview-file-details">
+                                            <i class="fas fa-file-video"></i>
+                                            <span id="previewFilename">No preview</span>
+                                            <span class="preview-file-size" id="previewFilesize"></span>
+                                        </div>
+                                    </div>
+
+                                    <!-- Video/Image Viewport -->
+                                    <div class="preview-viewport" id="previewContainer">
+                                        <div class="preview-media-container">
+                                            <video id="previewVideo" class="preview-media" controls style="display:none;"></video>
+                                            <img id="previewImage" class="preview-media" alt="Preview" style="display:none;">
+
+                                            <!-- Placeholder -->
+                                            <div class="preview-placeholder">
+                                                <div class="preview-placeholder-icon">
+                                                    <i class="fas fa-film"></i>
+                                                </div>
+                                                <h3>No Preview</h3>
+                                                <p>Render or preview an animation</p>
+                                                <div class="preview-placeholder-hint">
+                                                    <i class="fas fa-info-circle"></i>
+                                                    <span>Videos will auto-load here</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Horizontal Resize Handle -->
+                        <div class="workspace-divider-h" id="horizontalResizeHandle"></div>
+
+                        <!-- Bottom Section: Unified Console & Terminal -->
+                        <div class="workspace-bottom" id="workspaceBottom">
+                            <div class="workspace-header">
+                                <h2><i class="fas fa-terminal"></i> Console & Terminal</h2>
+                                <div class="workspace-tools">
+                                    <span class="terminal-status-label">Status: <span id="terminalStatus">Ready</span></span>
+                                    <button class="icon-btn small" id="copyOutputBtn" title="Copy Terminal Output">
+                                        <i class="fas fa-copy"></i>
+                                    </button>
+                                    <button class="icon-btn small" id="clearOutputBtn" title="Clear Console">
+                                        <i class="fas fa-trash"></i>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="workspace-body" style="padding: 0;">
+                                <!-- xterm.js Terminal Container -->
+                                <div id="terminalContainer" style="width: 100%; height: 100%; background: #0c0c0c; padding: 10px;"></div>
+                            </div>
+                        </div>
+                        </div>
+                        <!-- End workspace-main-content -->
+
+                        <!-- Controls Sidebar -->
+                        <div class="workspace-controls-sidebar">
+                            <div class="sidebar-header">
+                                <i class="fas fa-sliders-h"></i>
+                                <h3>Render Controls</h3>
+                            </div>
+
+                            <!-- Preview Settings Section -->
+                            <div class="sidebar-section">
+                                <div class="sidebar-section-header">
+                                    <i class="fas fa-eye"></i>
+                                    <span>Quick Preview</span>
+                                </div>
+                                <div class="sidebar-section-body">
+                                    <div class="sidebar-control">
+                                        <label>Quality</label>
+                                        <select id="previewQualitySelect">
+                                            <option value="480p" selected>480p</option>
+                                            <option value="720p">720p</option>
+                                            <option value="1080p">1080p</option>
+                                            <option value="custom">Custom</option>
+                                        </select>
+                                    </div>
+                                    <div class="sidebar-control" id="previewCustomResolutionDiv" style="display: none;">
+                                        <label>Width</label>
+                                        <input type="number" id="previewCustomWidth" placeholder="1920" min="1" value="1920">
+                                        <label style="margin-top: 8px;">Height</label>
+                                        <input type="number" id="previewCustomHeight" placeholder="1080" min="1" value="1080">
+                                    </div>
+                                    <div class="sidebar-control">
+                                        <label>FPS</label>
+                                        <select id="previewFpsSelect">
+                                            <option value="15" selected>15</option>
+                                            <option value="24">24</option>
+                                            <option value="30">30</option>
+                                            <option value="60">60</option>
+                                            <option value="custom">Custom</option>
+                                        </select>
+                                    </div>
+                                    <div class="sidebar-control" id="previewCustomFpsDiv" style="display: none;">
+                                        <label>Custom FPS</label>
+                                        <input type="number" id="previewCustomFps" placeholder="30" min="1" max="240" value="30">
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Render Settings Section -->
+                            <div class="sidebar-section">
+                                <div class="sidebar-section-header">
+                                    <i class="fas fa-film"></i>
+                                    <span>Final Render</span>
+                                </div>
+                                <div class="sidebar-section-body">
+                                    <div class="sidebar-control">
+                                        <label>Quality</label>
+                                        <select id="qualitySelect">
+                                            <option value="16K">16K</option>
+                                            <option value="8K">8K</option>
+                                            <option value="4K">4K</option>
+                                            <option value="1440p">1440p</option>
+                                            <option value="1080p">1080p</option>
+                                            <option value="720p" selected>720p</option>
+                                            <option value="480p">480p</option>
+                                            <option value="custom">Custom</option>
+                                        </select>
+                                    </div>
+                                    <div class="sidebar-control" id="customResolutionDiv" style="display: none;">
+                                        <label>Width</label>
+                                        <input type="number" id="customWidth" placeholder="1920" min="1" value="1920">
+                                        <label style="margin-top: 8px;">Height</label>
+                                        <input type="number" id="customHeight" placeholder="1080" min="1" value="1080">
+                                    </div>
+                                    <div class="sidebar-control">
+                                        <label>FPS</label>
+                                        <select id="fpsSelect">
+                                            <option value="24">24</option>
+                                            <option value="30" selected>30</option>
+                                            <option value="60">60</option>
+                                            <option value="120">120</option>
+                                            <option value="custom">Custom</option>
+                                        </select>
+                                    </div>
+                                    <div class="sidebar-control" id="customFpsDiv" style="display: none;">
+                                        <label>Custom FPS</label>
+                                        <input type="number" id="customFps" placeholder="30" min="1" max="240" value="30">
+                                    </div>
+                                    <div class="sidebar-control">
+                                        <label>Format</label>
+                                        <select id="formatSelect">
+                                            <option value="mp4" selected>MP4</option>
+                                            <option value="mov">MOV</option>
+                                            <option value="gif">GIF</option>
+                                            <option value="png">PNG</option>
+                                        </select>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <!-- End controls sidebar -->
+                    </div>
+                </div>
+
+                <div class="tab-panel" id="system-panel">
+                    <div class="panel-heading">
+                        <h2><i class="fas fa-info-circle"></i> System Overview</h2>
+                        <button class="small-btn" id="refreshSystemBtn">
+                            <i class="fas fa-sync"></i> Refresh
+                        </button>
+                    </div>
+                    <div class="info-grid" id="systemInfo">
+                        <div class="info-card">
+                            <h4>Python Version</h4>
+                            <p id="pythonVersion">-</p>
+                        </div>
+                        <div class="info-card">
+                            <h4>Manim Version</h4>
+                            <p id="manimVersion">-</p>
+                        </div>
+                        <div class="info-card">
+                            <h4>Platform</h4>
+                            <p id="platform">-</p>
+                        </div>
+                        <div class="info-card">
+                            <h4>Virtual Environment</h4>
+                            <p id="venvPath">-</p>
+                        </div>
+                        <div class="info-card">
+                            <h4>Python Executable</h4>
+                            <p id="pythonExe">-</p>
+                        </div>
+                        <div class="info-card">
+                            <h4>Media Directory</h4>
+                            <p id="mediaDir">-</p>
+                        </div>
+                        <div class="info-card">
+                            <h4>Project Root</h4>
+                            <p id="baseDir">-</p>
+                        </div>
+                        <div class="info-card">
+                            <h4>Environment Status</h4>
+                            <p id="venvStatus">-</p>
+                        </div>
+                        <div class="info-card">
+                            <h4>Manim Status</h4>
+                            <p id="manimStatus">-</p>
+                        </div>
+                        <div class="info-card" id="latexStatusCard">
+                            <h4>📄 LaTeX Status</h4>
+                            <p id="latexStatus" style="display: flex; align-items: center; gap: 8px;">
+                                <span class="status-indicator checking"></span>
+                                <span>Checking...</span>
+                            </p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- SIMPLE ASSETS TAB -->
+                <div class="tab-panel" id="assets-panel">
+                    <div class="panel-heading">
+                        <h2><i class="fas fa-images"></i> Assets</h2>
+                        <button class="small-btn" onclick="window.loadAssets()">
+                            <i class="fas fa-sync"></i> Refresh
+                        </button>
+                    </div>
+
+                    <!-- Assets Layout: List on left, Preview on right -->
+                    <div style="display: flex; height: calc(100% - 60px); gap: 20px; padding: 20px;">
+                        <!-- Left: File List -->
+                        <div style="flex: 1; overflow: auto;">
+                            <button onclick="window.uploadAssets()" style="width: 100%; padding: 40px; background: var(--bg-secondary); border: 2px dashed var(--border-color); border-radius: 8px; color: var(--text-primary); font-size: 16px; cursor: pointer; margin-bottom: 20px;">
+                                <i class="fas fa-cloud-upload-alt" style="font-size: 32px; display: block; margin-bottom: 10px;"></i>
+                                Click to upload media files
+                            </button>
+                            <div id="simpleAssetsContainer"></div>
+                        </div>
+
+                        <!-- Right: Preview Panel -->
+                        <div style="flex: 0 0 400px; background: var(--bg-secondary); border-radius: 8px; padding: 16px; display: flex; flex-direction: column;">
+                            <h3 style="margin: 0 0 12px 0; font-size: 16px; color: var(--text-primary);">
+                                <i class="fas fa-eye"></i> Preview
+                            </h3>
+                            <div id="assetsPreviewContainer" style="flex: 1; background: var(--bg-primary); border-radius: 6px; display: flex; align-items: center; justify-content: center; overflow: hidden;">
+                                <div style="text-align: center; color: var(--text-secondary);">
+                                    <i class="fas fa-image" style="font-size: 48px; margin-bottom: 12px; opacity: 0.3;"></i>
+                                    <p>Click a file to preview</p>
+                                </div>
+                            </div>
+                            <div id="assetsPreviewInfo" style="margin-top: 12px; font-size: 13px; color: var(--text-secondary); text-align: center;"></div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </div>
+    </div>
+    <!-- Status Bar -->
+    <footer class="status-bar">
+        <div class="status-left">
+            <span class="status-item">
+                <i class="fas fa-circle" id="statusIndicator"></i>
+                <span id="statusText">Ready</span>
+            </span>
+            <span class="status-item" id="currentFile">
+                <i class="fas fa-file"></i>
+                <span>Untitled</span>
+            </span>
+        </div>
+        <div class="status-right">
+            <span class="status-item" id="linesCount">Lines: 0</span>
+            <span class="status-item" id="cursorPosition">Ln 1, Col 1</span>
+            <span class="status-item" id="selectionInfo" style="display: none; color: #3b82f6;"></span>
+        </div>
+    </footer>
+
+    <!-- Help and Settings Modals -->
+    <!-- Include the modal HTML -->
+    <script>
+        // Load and inject the modals HTML
+        fetch('app_features_modals.html?v=2025-01-26-v7')
+            .then(response => response.text())
+            .then(html => {
+                // Create temp div to parse HTML
+                const tempDiv = document.createElement('div');
+                tempDiv.innerHTML = html;
+
+                // Append each modal directly to body (not wrapped in div)
+                while (tempDiv.firstChild) {
+                    document.body.appendChild(tempDiv.firstChild);
+                }
+
+                console.log('[MODALS] Modals loaded and injected into DOM');
+
+                // Trigger event to signal modals are ready
+                window.dispatchEvent(new Event('modalsReady'));
+            })
+            .catch(err => console.error('Failed to load modals:', err));
+    </script>
+
+    <!-- xterm.js Terminal Emulator -->
+    <script>
+        console.log('[XTERM LOAD] About to load xterm.js...');
+        console.log('[XTERM LOAD] Document readyState:', document.readyState);
+    </script>
+    <script src="xterm/xterm.js" onload="console.log('[XTERM LOAD] xterm.js loaded successfully. Terminal available:', typeof Terminal !== 'undefined')" onerror="console.error('[XTERM LOAD] Failed to load xterm.js!')"></script>
+    <script>
+        console.log('[XTERM LOAD] After loading xterm.js - Terminal constructor:', typeof Terminal);
+        console.log('[XTERM LOAD] After loading xterm.js - window.Terminal:', typeof window.Terminal);
+    </script>
+
+    <!-- Monaco Editor - AMD Loader -->
+    <script src="monaco/vs/loader.js"></script>
+    <script>
+        // Configure AMD loader path
+        require.config({ paths: { 'vs': 'monaco/vs' } });
+
+        // Set up Monaco Environment for web workers
+        window.MonacoEnvironment = {
+            getWorkerUrl: function(workerId, label) {
+                return 'monaco/vs/base/worker/workerMain.js';
+            }
+        };
+
+        console.log('Monaco AMD loader configured');
+        console.log('require available:', typeof require !== 'undefined');
+    </script>
+
+    <!-- Main Application Script - Load renderer_desktop.js directly -->
+    <!-- Cache buster added to force reload after fixes - change version to force reload -->
+    <script src="renderer_desktop.js?v=2025-01-26-basic-monaco-no-lsp"></script>
+
+    <!-- New Features: File Upload via PyWebView Dialog -->
+    <script src="new_features.js?v=2025-01-26-windows-details-view"></script>
+
+    <!-- App Features: Theme Toggle, Help Modal, Settings Dialog -->
+    <script src="app_features.js?v=2025-01-26-v14-pywebview-ready-fix"></script>
+
+    <!-- SIMPLE ASSETS - NO CACHE -->
+    <script src="simple_assets.js?nocache"></script>
+</body>
+</html>

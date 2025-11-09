@@ -1,0 +1,264 @@
+<!-- ============================================================================
+     HELP MODAL
+     ============================================================================ -->
+<div class="modal-overlay" id="helpModal">
+    <div class="modal-container">
+        <div class="modal-header">
+            <h2>
+                <i class="fas fa-question-circle"></i>
+                Help & Usage Guide
+            </h2>
+            <button class="modal-close-btn" id="helpModalClose">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+        <div class="modal-body">
+            <!-- Getting Started -->
+            <div class="help-section">
+                <h3><i class="fas fa-rocket"></i> Getting Started</h3>
+                <p>Welcome to Manim Studio! Here's how to create your first animation:</p>
+                <ol style="color: var(--text-secondary); line-height: 1.8;">
+                    <li>Write your Manim code in the editor (left panel)</li>
+                    <li>Click <strong style="color: var(--accent-primary);">Preview</strong> for a quick low-quality preview</li>
+                    <li>Click <strong style="color: var(--accent-primary);">Render</strong> for high-quality final output</li>
+                    <li>Your video will appear in the preview panel (right)</li>
+                    <li>Save your work using the <strong>Save</strong> button</li>
+                </ol>
+            </div>
+
+            <!-- Keyboard Shortcuts -->
+            <div class="help-section">
+                <h3><i class="fas fa-keyboard"></i> Keyboard Shortcuts</h3>
+                <ul class="help-shortcut-list">
+                    <li class="help-shortcut-item">
+                        <span class="help-shortcut-name">Render Animation</span>
+                        <span class="help-shortcut-key">F5</span>
+                    </li>
+                    <li class="help-shortcut-item">
+                        <span class="help-shortcut-name">Quick Preview</span>
+                        <span class="help-shortcut-key">F6</span>
+                    </li>
+                    <li class="help-shortcut-item">
+                        <span class="help-shortcut-name">Save File</span>
+                        <span class="help-shortcut-key">Ctrl + S</span>
+                    </li>
+                    <li class="help-shortcut-item">
+                        <span class="help-shortcut-name">New File</span>
+                        <span class="help-shortcut-key">Ctrl + N</span>
+                    </li>
+                    <li class="help-shortcut-item">
+                        <span class="help-shortcut-name">Open File</span>
+                        <span class="help-shortcut-key">Ctrl + O</span>
+                    </li>
+                </ul>
+            </div>
+
+            <!-- Features -->
+            <div class="help-section">
+                <h3><i class="fas fa-star"></i> Key Features</h3>
+                <ul style="color: var(--text-secondary); line-height: 1.8;">
+                    <li><strong style="color: var(--accent-primary);">Monaco Editor</strong> - Professional code editor with syntax highlighting and IntelliSense</li>
+                    <li><strong style="color: var(--accent-primary);">Live Preview</strong> - See your animations instantly in the preview panel</li>
+                    <li><strong style="color: var(--accent-primary);">Assets Manager</strong> - Organize and manage your rendered videos and images</li>
+                    <li><strong style="color: var(--accent-primary);">Integrated Terminal</strong> - Run commands and manage Python packages</li>
+                    <li><strong style="color: var(--accent-primary);">Dark/Light Theme</strong> - Switch themes using the moon/sun button</li>
+                </ul>
+            </div>
+
+            <!-- Assets Folder -->
+            <div class="help-section">
+                <h3><i class="fas fa-folder"></i> Assets Folder</h3>
+                <p>You can add your own files to the <code style="background: var(--bg-primary); padding: 2px 6px; border-radius: 4px; color: var(--accent-primary);">assets/</code> folder:</p>
+                <ul style="color: var(--text-secondary); line-height: 1.8;">
+                    <li><strong>Supported file types:</strong>
+                        <ul style="margin-top: 4px;">
+                            <li>Videos: MP4, MOV, AVI, WebM, MKV, FLV, M4V</li>
+                            <li>Images: PNG, JPG, GIF, SVG, BMP, WebP, ICO</li>
+                            <li>Fonts: TTF, OTF, WOFF, WOFF2, TTC, EOT</li>
+                            <li>Audio: MP3, WAV, OGG, M4A, AAC, FLAC, WMA</li>
+                            <li>Subtitles: SRT, VTT, ASS, SSA, SUB</li>
+                            <li>Text: TXT, MD, JSON, XML, CSV</li>
+                        </ul>
+                    </li>
+                    <li>Manually copy files into the assets folder or use the Upload button</li>
+                    <li>They will automatically appear in the Assets tab</li>
+                    <li>Your files won't be deleted by the app</li>
+                    <li>Click any asset to preview it</li>
+                </ul>
+                <div style="margin-top: 12px; padding: 12px; background: rgba(59, 130, 246, 0.1); border-left: 3px solid #3b82f6; border-radius: 4px;">
+                    <strong style="color: #3b82f6;"><i class="fas fa-font"></i> Using Custom Fonts in Manim:</strong>
+                    <pre style="margin-top: 8px; background: var(--bg-primary); padding: 8px; border-radius: 4px; font-size: 12px; overflow-x: auto;"><code>from manim import *
+
+class CustomFontExample(Scene):
+    def construct(self):
+        # Files in assets folder are automatically found
+        register_font("YourFont.ttf")
+
+        # Use the font (without extension)
+        text = Text("Hello World", font="YourFont")
+        self.play(Write(text))</code></pre>
+                </div>
+                <div style="margin-top: 12px; padding: 12px; background: rgba(16, 185, 129, 0.1); border-left: 3px solid #10b981; border-radius: 4px;">
+                    <strong style="color: #10b981;"><i class="fas fa-music"></i> Using Audio Files in Manim:</strong>
+                    <pre style="margin-top: 8px; background: var(--bg-primary); padding: 8px; border-radius: 4px; font-size: 12px; overflow-x: auto;"><code>from manim import *
+
+class AudioExample(Scene):
+    def construct(self):
+        # Files in assets folder are automatically found
+        self.add_sound("your_audio.mp3")
+
+        # Your animation here
+        circle = Circle()
+        self.play(Create(circle))
+        self.wait()</code></pre>
+                </div>
+            </div>
+
+            <!-- Tips -->
+            <div class="help-tip">
+                <strong><i class="fas fa-lightbulb"></i> Pro Tip:</strong>
+                <p style="margin: 8px 0 0 0; color: var(--text-secondary);">
+                    Use the <strong>Preview</strong> button (F6) for quick iterations while developing your animation.
+                    Once you're happy with it, use <strong>Render</strong> (F5) for the final high-quality output!
+                </p>
+            </div>
+
+            <!-- Terminal Commands -->
+            <div class="help-section" style="margin-top: 20px;">
+                <h3><i class="fas fa-terminal"></i> Terminal Commands</h3>
+                <ul class="help-shortcut-list">
+                    <li class="help-shortcut-item">
+                        <span class="help-shortcut-name">List installed packages</span>
+                        <span class="help-shortcut-key">pip list</span>
+                    </li>
+                    <li class="help-shortcut-item">
+                        <span class="help-shortcut-name">Install a package</span>
+                        <span class="help-shortcut-key">pip install package-name</span>
+                    </li>
+                    <li class="help-shortcut-item">
+                        <span class="help-shortcut-name">Clear console</span>
+                        <span class="help-shortcut-key">clear</span>
+                    </li>
+                    <li class="help-shortcut-item">
+                        <span class="help-shortcut-name">Show help</span>
+                        <span class="help-shortcut-key">help</span>
+                    </li>
+                </ul>
+            </div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-primary" id="helpModalOk">Got it!</button>
+        </div>
+    </div>
+</div>
+
+<!-- ============================================================================
+     SETTINGS MODAL
+     ============================================================================ -->
+<div class="modal-overlay" id="settingsModal">
+    <div class="modal-container">
+        <div class="modal-header">
+            <h2>
+                <i class="fas fa-cog"></i>
+                Settings
+            </h2>
+            <button class="modal-close-btn" id="settingsModalClose">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+        <div class="modal-body">
+            <!-- Output Settings -->
+            <div class="settings-group">
+                <h3><i class="fas fa-video"></i> Output Settings</h3>
+
+                <div class="settings-field">
+                    <label for="settingDefaultSaveLocation">
+                        Default Save Location
+                        <span class="settings-description">Where rendered files are saved by default</span>
+                    </label>
+                    <div class="settings-field-inline">
+                        <input type="text" id="settingDefaultSaveLocation" placeholder="Click Browse to select folder...">
+                        <button id="browseDefaultSaveLocation">
+                            <i class="fas fa-folder-open"></i> Browse
+                        </button>
+                    </div>
+                </div>
+
+                <div class="settings-field">
+                    <label for="settingRenderQuality">
+                        Render Quality (Resolution)
+                        <span class="settings-description">Higher quality = larger file size</span>
+                    </label>
+                    <select id="settingRenderQuality">
+                        <option value="480p">480p (Low - 854x480 15fps)</option>
+                        <option value="720p">720p (Medium - 1280x720 30fps)</option>
+                        <option value="1080p" selected>1080p (High - 1920x1080 60fps)</option>
+                        <option value="2K">2K (Production - 2560x1440 60fps)</option>
+                        <option value="4K">4K (Ultra - 3840x2160 60fps)</option>
+                    </select>
+                </div>
+
+                <div class="settings-field">
+                    <label for="settingFPS">
+                        Frame Rate (FPS) Override
+                        <span class="settings-description">Note: Quality presets include FPS. This overrides preset FPS.</span>
+                    </label>
+                    <select id="settingFPS">
+                        <option value="15">15 FPS (Fast Preview)</option>
+                        <option value="24">24 FPS (Cinematic)</option>
+                        <option value="30">30 FPS (Standard)</option>
+                        <option value="60" selected>60 FPS (Smooth)</option>
+                        <option value="120">120 FPS (Ultra Smooth)</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Workflow Settings -->
+            <div class="settings-group">
+                <h3><i class="fas fa-tasks"></i> Workflow Settings</h3>
+
+                <div class="settings-checkbox">
+                    <input type="checkbox" id="settingAutoSave" checked>
+                    <label for="settingAutoSave">
+                        Auto-save after render
+                        <div class="settings-description">Automatically show save dialog after rendering completes</div>
+                    </label>
+                </div>
+
+                <div class="settings-checkbox">
+                    <input type="checkbox" id="settingAutoOpenOutput">
+                    <label for="settingAutoOpenOutput">
+                        Auto-open output folder
+                        <div class="settings-description">Open the output folder in file explorer after saving</div>
+                    </label>
+                </div>
+            </div>
+
+            <!-- Editor Settings -->
+            <div class="settings-group">
+                <h3><i class="fas fa-code"></i> Editor Settings</h3>
+
+                <div class="settings-field">
+                    <label for="settingEditorFontSize">
+                        Font Size
+                        <span class="settings-description">Editor font size in pixels</span>
+                    </label>
+                    <select id="settingEditorFontSize">
+                        <option value="12">12px</option>
+                        <option value="14" selected>14px</option>
+                        <option value="16">16px</option>
+                        <option value="18">18px</option>
+                        <option value="20">20px</option>
+                    </select>
+                </div>
+            </div>
+
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-secondary" id="cancelSettingsBtn">Cancel</button>
+            <button class="btn btn-primary" id="applySettingsBtn">
+                <i class="fas fa-check"></i> Apply Settings
+            </button>
+        </div>
+    </div>
+</div>
