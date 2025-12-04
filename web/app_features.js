@@ -109,9 +109,45 @@ async function loadAppSettings() {
         if (result && result.status === 'success' && result.settings) {
             appSettings = { ...appSettings, ...result.settings };
             console.log('[SETTINGS] Loaded from .manim_studio/settings.json:', appSettings);
+
+            // Apply loaded settings to render and preview dropdowns
+            applySettingsToUI();
         }
     } catch (error) {
         console.error('[SETTINGS] Error loading:', error);
+    }
+}
+
+function applySettingsToUI() {
+    console.log('[SETTINGS] Applying settings to UI dropdowns...');
+
+    // Update render control dropdowns
+    const renderQualityDropdown = document.getElementById('qualitySelect');
+    const renderFpsDropdown = document.getElementById('fpsSelect');
+
+    if (renderQualityDropdown && appSettings.renderQuality) {
+        renderQualityDropdown.value = appSettings.renderQuality;
+        console.log('[SETTINGS] Set render quality dropdown to:', appSettings.renderQuality);
+    }
+
+    if (renderFpsDropdown && appSettings.fps) {
+        renderFpsDropdown.value = appSettings.fps.toString();
+        console.log('[SETTINGS] Set render FPS dropdown to:', appSettings.fps);
+    }
+
+    // Preview dropdowns should stay at hardcoded defaults (480p, 15fps)
+    // Don't apply settings to preview - it should always default to fast preview
+    const previewQualityDropdown = document.getElementById('previewQualitySelect');
+    const previewFpsDropdown = document.getElementById('previewFpsSelect');
+
+    if (previewQualityDropdown) {
+        previewQualityDropdown.value = '480p';
+        console.log('[SETTINGS] Preview quality hardcoded to: 480p');
+    }
+
+    if (previewFpsDropdown) {
+        previewFpsDropdown.value = '15';
+        console.log('[SETTINGS] Preview FPS hardcoded to: 15');
     }
 }
 
@@ -229,6 +265,9 @@ async function applySettings() {
         if (autoOpenCheck) appSettings.autoOpenOutput = autoOpenCheck.checked;
 
         console.log('[SETTINGS] Settings updated:', appSettings);
+
+        // Apply settings to UI dropdowns
+        applySettingsToUI();
 
         // Save to .manim_studio/settings.json
         await saveAppSettings();

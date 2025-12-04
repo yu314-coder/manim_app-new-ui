@@ -15,6 +15,9 @@ from pathlib import Path
 import re
 import socket
 
+# App version
+APP_VERSION = "1.0.5.0"
+
 # Terminal emulation with PTY support
 try:
     import winpty
@@ -34,9 +37,11 @@ else:
 # User data directory (defined early for use in setup_venv)
 # Force exact structure: C:\Users\<username>\.manim_studio
 USER_DATA_DIR = os.path.join(os.path.expanduser('~'), '.manim_studio')
-MEDIA_DIR = os.path.join(USER_DATA_DIR, 'media')
+MEDIA_DIR = os.path.join(USER_DATA_DIR, 'media')  # Render output folder
 ASSETS_DIR = os.path.join(USER_DATA_DIR, 'assets')
 PREVIEW_DIR = os.path.join(USER_DATA_DIR, 'preview')  # Preview folder (cleared before each preview)
+RENDER_DIR = os.path.join(USER_DATA_DIR, 'render')  # Render folder (for high-quality renders)
+AUTOSAVE_DIR = os.path.join(USER_DATA_DIR, 'autosave')  # Auto-save directory
 
 # Virtual environment directory - always at: ~/.manim_studio/venvs/manim_studio_default
 VENV_DIR = os.path.join(USER_DATA_DIR, 'venvs', 'manim_studio_default')
@@ -641,6 +646,7 @@ app_state = {
     'output_dir': MEDIA_DIR,
     'window': None,
     'generated_files': [],  # Track files generated this session for cleanup
+    'preview_files_to_cleanup': set(),  # Track preview MP4 files copied to assets for cleanup on exit
     'terminal_process': None,  # Persistent cmd.exe session
     'terminal_thread': None,  # Thread for reading terminal output
     'terminal_output_buffer': [],  # Buffer for terminal output
@@ -704,6 +710,31 @@ def clear_preview_folder():
         return True
     except Exception as e:
         print(f"[ERROR] Failed to clear preview folder: {e}")
+        return False
+
+def clear_render_folder():
+    """Clear all files in the render folder before each render"""
+    import shutil
+    try:
+        if os.path.exists(RENDER_DIR):
+            # Remove all contents
+            for item in os.listdir(RENDER_DIR):
+                item_path = os.path.join(RENDER_DIR, item)
+                try:
+                    if os.path.isfile(item_path) or os.path.islink(item_path):
+                        os.unlink(item_path)
+                    elif os.path.isdir(item_path):
+                        shutil.rmtree(item_path)
+                except Exception as e:
+                    print(f"[WARNING] Failed to delete {item_path}: {e}")
+            print(f"[OK] Cleared render folder: {RENDER_DIR}")
+        else:
+            # Create if doesn't exist
+            os.makedirs(RENDER_DIR, exist_ok=True)
+            print(f"[OK] Created render folder: {RENDER_DIR}")
+        return True
+    except Exception as e:
+        print(f"[ERROR] Failed to clear render folder: {e}")
         return False
 
 def load_settings():
@@ -796,7 +827,7 @@ class MyScene(Scene):
     def save_file_dialog(self, code):
         """Save file dialog"""
         result = app_state['window'].create_file_dialog(
-            webview.SAVE_DIALOG,
+            dialog_type=webview.SAVE_DIALOG,
             save_filename='scene.py',
             file_types=('Python Files (*.py)',)
         )
@@ -833,8 +864,184 @@ class MyScene(Scene):
         except Exception as e:
             return {'status': 'error', 'message': str(e)}
 
+    def autosave_code(self, code):
+        """Auto-save code to temporary location"""
+        try:
+            import json
+            from datetime import datetime
+
+            # Create autosave directory
+            os.makedirs(AUTOSAVE_DIR, exist_ok=True)
+
+            # Generate timestamp-based filename
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            autosave_file = os.path.join(AUTOSAVE_DIR, f'autosave_{timestamp}.py')
+
+            # Save code
+            with open(autosave_file, 'w', encoding='utf-8') as f:
+                f.write(code)
+
+            # Save metadata
+            metadata = {
+                'timestamp': timestamp,
+                'file_path': app_state.get('current_file_path', ''),
+                'autosave_file': autosave_file
+            }
+
+            metadata_file = os.path.join(AUTOSAVE_DIR, f'autosave_{timestamp}.json')
+            with open(metadata_file, 'w', encoding='utf-8') as f:
+                json.dump(metadata, f, indent=2)
+
+            # Keep only last 5 autosaves
+            self.cleanup_old_autosaves()
+
+            print(f"[AUTOSAVE] Saved to {autosave_file}")
+            return {'status': 'success', 'file': autosave_file, 'timestamp': timestamp}
+
+        except Exception as e:
+            print(f"[AUTOSAVE ERROR] {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def cleanup_old_autosaves(self):
+        """Keep only the last 5 autosaves"""
+        try:
+            # Get all autosave files
+            autosave_files = []
+            for filename in os.listdir(AUTOSAVE_DIR):
+                if filename.startswith('autosave_') and filename.endswith('.py'):
+                    filepath = os.path.join(AUTOSAVE_DIR, filename)
+                    autosave_files.append((filepath, os.path.getmtime(filepath)))
+
+            # Sort by modification time (newest first)
+            autosave_files.sort(key=lambda x: x[1], reverse=True)
+
+            # Delete old autosaves (keep only 5 newest)
+            for filepath, _ in autosave_files[5:]:
+                try:
+                    os.remove(filepath)
+                    # Also remove corresponding metadata file
+                    metadata_file = filepath.replace('.py', '.json')
+                    if os.path.exists(metadata_file):
+                        os.remove(metadata_file)
+                    print(f"[AUTOSAVE] Deleted old autosave: {filepath}")
+                except Exception as e:
+                    print(f"[AUTOSAVE] Error deleting {filepath}: {e}")
+
+        except Exception as e:
+            print(f"[AUTOSAVE CLEANUP ERROR] {e}")
+
+    def get_autosave_files(self):
+        """Get list of available autosave files"""
+        try:
+            import json
+
+            if not os.path.exists(AUTOSAVE_DIR):
+                return {'status': 'success', 'files': []}
+
+            autosaves = []
+            for filename in os.listdir(AUTOSAVE_DIR):
+                if filename.startswith('autosave_') and filename.endswith('.json'):
+                    metadata_file = os.path.join(AUTOSAVE_DIR, filename)
+                    try:
+                        with open(metadata_file, 'r', encoding='utf-8') as f:
+                            metadata = json.load(f)
+
+                        # Check if corresponding .py file exists
+                        py_file = metadata.get('autosave_file', '')
+                        if os.path.exists(py_file):
+                            autosaves.append(metadata)
+                    except Exception as e:
+                        print(f"[AUTOSAVE] Error reading metadata {filename}: {e}")
+
+            # Sort by timestamp (newest first)
+            autosaves.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
+
+            return {'status': 'success', 'files': autosaves}
+
+        except Exception as e:
+            print(f"[AUTOSAVE ERROR] {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def load_autosave(self, autosave_file):
+        """Load code from an autosave file"""
+        try:
+            if not os.path.exists(autosave_file):
+                return {'status': 'error', 'message': 'Autosave file not found'}
+
+            with open(autosave_file, 'r', encoding='utf-8') as f:
+                code = f.read()
+
+            print(f"[AUTOSAVE] Loaded from {autosave_file}")
+            return {'status': 'success', 'code': code}
+
+        except Exception as e:
+            print(f"[AUTOSAVE ERROR] {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def delete_autosave(self, autosave_file):
+        """Delete a specific autosave file"""
+        try:
+            if os.path.exists(autosave_file):
+                os.remove(autosave_file)
+                # Also remove metadata
+                metadata_file = autosave_file.replace('.py', '.json')
+                if os.path.exists(metadata_file):
+                    os.remove(metadata_file)
+                print(f"[AUTOSAVE] Deleted {autosave_file}")
+                return {'status': 'success'}
+            else:
+                return {'status': 'error', 'message': 'File not found'}
+        except Exception as e:
+            print(f"[AUTOSAVE ERROR] {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def check_code_errors(self, code):
+        """Check Python code for syntax errors using AST"""
+        try:
+            import ast
+            import traceback
+
+            errors = []
+
+            if not code.strip():
+                return {'status': 'success', 'errors': errors}
+
+            try:
+                # Try to parse the code
+                ast.parse(code)
+                # No errors found
+                return {'status': 'success', 'errors': []}
+
+            except SyntaxError as e:
+                # Syntax error found
+                error_info = {
+                    'type': 'error',
+                    'line': e.lineno if e.lineno else 0,
+                    'column': e.offset if e.offset else 0,
+                    'message': str(e.msg),
+                    'text': e.text.strip() if e.text else ''
+                }
+                errors.append(error_info)
+
+            except Exception as e:
+                # Other parsing errors
+                error_info = {
+                    'type': 'error',
+                    'line': 0,
+                    'column': 0,
+                    'message': str(e),
+                    'text': ''
+                }
+                errors.append(error_info)
+
+            return {'status': 'success', 'errors': errors}
+
+        except Exception as e:
+            print(f"[CODE CHECK ERROR] {e}")
+            return {'status': 'error', 'message': str(e)}
+
     def render_animation(self, code, quality='720p', fps=30, format='mp4', width=None, height=None):
-        """Render the animation with proper output handling"""
+        """Render the animation - same as preview but uses RENDER_DIR"""
         global PYTHON_EXE
 
         # Initialize Python executable if needed
@@ -847,24 +1054,36 @@ class MyScene(Scene):
             return {'status': 'error', 'message': 'Already rendering'}
 
         try:
-            # Create temporary file for the scene
-            os.makedirs(ASSETS_DIR, exist_ok=True)
-            timestamp = int(time.time() * 1000)
-            temp_file = os.path.join(ASSETS_DIR, f'temp_scene_{timestamp}.py')
+            # Clear render folder before rendering
+            print("[RENDER] Clearing render folder...")
+            clear_render_folder()
 
+            # Create temporary file in render folder
+            os.makedirs(RENDER_DIR, exist_ok=True)
+            timestamp = int(time.time() * 1000)
+            temp_file = os.path.join(RENDER_DIR, f'temp_render_{timestamp}.py')
+
+            # Write file and ensure it's fully closed before proceeding
             with open(temp_file, 'w', encoding='utf-8') as f:
                 f.write(code)
+                f.flush()  # Flush to OS buffer
+                os.fsync(f.fileno())  # Force write to disk
 
-            # Create manim.cfg in the same directory as the script
-            create_manim_config(ASSETS_DIR)
+            # Ensure file is flushed to disk and fully closed
+            time.sleep(0.2)  # Increased delay to ensure file is available
 
-            # Extract scene class name
+            # Verify file was created
+            if not os.path.exists(temp_file):
+                return {'status': 'error', 'message': f'Failed to create temporary file: {temp_file}'}
+
+            print(f"[RENDER] Created temp file: {temp_file}")
+
+            # Create manim.cfg in the render directory
+            create_manim_config(RENDER_DIR)
+
             scene_name = extract_scene_name(code)
             if not scene_name:
-                return {'status': 'error', 'message': 'No scene class found in code'}
-
-            # Build manim command - use correct Manim Community syntax
-            quality_flag, w, h = QUALITY_PRESETS.get(quality, QUALITY_PRESETS["720p"])
+                return {'status': 'error', 'message': 'No scene class found'}
 
             # Get manim executable path (in venv Scripts folder)
             if os.name == 'nt':
@@ -879,25 +1098,168 @@ class MyScene(Scene):
             else:
                 cmd = [manim_exe]
 
-            # Add file and scene
-            cmd.extend([temp_file, scene_name])
+            # Convert quality preset to flag
+            quality_flag = self._get_quality_flag(quality)
 
-            # Add quality flag
-            cmd.append(quality_flag)
+            # Add file, scene, and quality flag
+            cmd.extend([temp_file, scene_name, quality_flag])
 
-            # Add media directory (required for custom output location)
-            cmd.extend(['--media_dir', MEDIA_DIR])
+            # Add render directory as media directory (output goes here)
+            cmd.extend(['--media_dir', RENDER_DIR])
 
-            # Add FPS only if not using preset (quality flags include FPS)
-            # Custom FPS overrides the quality preset FPS
-            if fps != 30 and quality in ['720p', '1080p']:  # Only override for presets with 30fps default
-                cmd.extend(['--fps', str(fps)])
+            # Add FPS if not using preset quality flag
+            if quality_flag not in ['-ql', '-qm', '-qh', '-qp', '-qk']:
+                cmd.extend(['--frame_rate', str(fps)])
 
-            # Add format if not mp4
+            # Add format if specified
             if format and format.lower() != 'mp4':
                 cmd.extend(['--format', format.lower()])
 
-            print(f"Running command: {' '.join(cmd)}")
+            print(f"Render command: {' '.join(cmd)}")
+
+            # Send command to terminal PTY instead of running in subprocess
+            # Terminal is in ASSETS_DIR, but render temp file is in RENDER_DIR, so we need full paths
+            # Build command string with proper quoting
+            cmd_parts = []
+            for arg in cmd:
+                # Quote arguments that have spaces or are paths
+                if ' ' in arg or arg == temp_file or '\\' in arg:
+                    cmd_parts.append(f'"{arg}"')
+                else:
+                    cmd_parts.append(arg)
+
+            cmd_string = ' '.join(cmd_parts)
+            print(f"[RENDER] Sending to terminal: {cmd_string}")
+
+            if app_state['terminal_process'] is not None:
+                try:
+                    # Clear terminal before running new render to remove old errors
+                    if WINPTY_AVAILABLE and hasattr(app_state['terminal_process'], 'write'):
+                        app_state['terminal_process'].write('cls\r\n')
+                        time.sleep(0.2)
+
+                    # Send command to terminal
+                    if WINPTY_AVAILABLE and hasattr(app_state['terminal_process'], 'write'):
+                        app_state['terminal_process'].write(cmd_string + '\r\n')
+                    else:
+                        app_state['terminal_process'].stdin.write(cmd_string + '\n')
+                        app_state['terminal_process'].stdin.flush()
+
+                    app_state['is_rendering'] = True
+
+                    # Store temp file path for cleanup after render
+                    render_temp_file = temp_file
+
+                    # Start a background thread to watch for render file and handle it
+                    def watch_render():
+                        import time
+                        import shutil
+                        max_wait = 300  # 5 minutes for render
+                        start_time = time.time()
+
+                        print(f"[RENDER WATCHER] Waiting for render to complete...")
+                        print(f"[RENDER WATCHER] Temp file to clean up later: {render_temp_file}")
+
+                        # Wait for file to appear in render directory
+                        while time.time() - start_time < max_wait:
+                            time.sleep(2)
+
+                            # Look for video files in render directory
+                            try:
+                                videos_dir = os.path.join(RENDER_DIR, 'videos')
+                                if os.path.exists(videos_dir):
+                                    for root, dirs, files in os.walk(videos_dir):
+                                        for file in files:
+                                            # Skip partial movie files - only look for the final combined MP4
+                                            if file.endswith('.mp4') and 'partial_movie_files' not in root:
+                                                render_file = os.path.join(root, file)
+                                                print(f"[RENDER WATCHER] Found render file: {render_file}")
+
+                                                # Wait a bit more to ensure manim has completely finished writing
+                                                print(f"[RENDER WATCHER] Waiting for manim to finish completely...")
+                                                time.sleep(3)  # Wait for manim to fully complete and release file
+
+                                                # Verify file is not being written to
+                                                file_size_1 = os.path.getsize(render_file)
+                                                time.sleep(1)
+                                                file_size_2 = os.path.getsize(render_file)
+
+                                                if file_size_1 != file_size_2:
+                                                    # File is still being written, wait more
+                                                    print(f"[RENDER WATCHER] File still being written, waiting more...")
+                                                    continue
+
+                                                # Move MP4 directly to RENDER_DIR root
+                                                try:
+                                                    final_render_path = os.path.join(RENDER_DIR, file)
+
+                                                    print(f"[RENDER WATCHER] Moving MP4 to root directory...")
+                                                    shutil.move(render_file, final_render_path)
+                                                    print(f"[RENDER WATCHER] Moved to: {final_render_path}")
+
+                                                    # Remove the videos folder structure created by manim
+                                                    print(f"[RENDER WATCHER] Removing manim folder structure...")
+                                                    try:
+                                                        if os.path.exists(videos_dir):
+                                                            shutil.rmtree(videos_dir)
+                                                            print(f"[RENDER WATCHER] Removed videos folder")
+                                                    except Exception as rmdir_err:
+                                                        print(f"[RENDER WATCHER] Could not remove videos dir: {rmdir_err}")
+
+                                                    # Clean up temp file after successful render
+                                                    try:
+                                                        if os.path.exists(render_temp_file):
+                                                            os.remove(render_temp_file)
+                                                            print(f"[RENDER WATCHER] Cleaned up temp .py file")
+                                                    except Exception as cleanup_err:
+                                                        print(f"[RENDER WATCHER] Error cleaning temp file: {cleanup_err}")
+
+                                                    app_state['is_rendering'] = False
+                                                    print(f"[RENDER WATCHER] Render complete! File ready at: {final_render_path}")
+
+                                                    # Show save dialog to user AFTER everything is done
+                                                    try:
+                                                        if app_state['window']:
+                                                            # Small delay to ensure everything is settled
+                                                            time.sleep(0.5)
+                                                            # Trigger save dialog in frontend with final path
+                                                            escaped_path = final_render_path.replace('\\', '\\\\').replace('"', '\\"')
+                                                            app_state['window'].evaluate_js(
+                                                                f'if(window.showRenderSaveDialog){{window.showRenderSaveDialog("{escaped_path}")}}'
+                                                            )
+                                                            print(f"[RENDER WATCHER] Save dialog triggered")
+                                                    except Exception as dialog_err:
+                                                        print(f"[RENDER WATCHER] Error showing save dialog: {dialog_err}")
+
+                                                    return
+                                                except Exception as move_err:
+                                                    print(f"[RENDER WATCHER ERROR] Failed to move/cleanup: {move_err}")
+
+                            except Exception as e:
+                                print(f"[RENDER WATCHER] Error checking files: {e}")
+
+                        print(f"[RENDER WATCHER] Timeout - render file not found after {max_wait}s")
+                        app_state['is_rendering'] = False
+
+                        # Clean up temp file even on timeout
+                        try:
+                            if os.path.exists(render_temp_file):
+                                os.remove(render_temp_file)
+                                print(f"[RENDER WATCHER] Cleaned up temp file after timeout: {render_temp_file}")
+                        except Exception as cleanup_err:
+                            print(f"[RENDER WATCHER] Error cleaning temp file: {cleanup_err}")
+
+                    import threading
+                    watcher_thread = threading.Thread(target=watch_render, daemon=True)
+                    watcher_thread.start()
+
+                    return {'status': 'started', 'message': 'Render command sent to terminal'}
+                except Exception as e:
+                    print(f"[RENDER ERROR] Failed to send to terminal: {e}")
+                    return {'status': 'error', 'message': f'Failed to send command to terminal: {e}'}
+
+            # Fallback to old subprocess method if terminal not available
+            print("[RENDER] Terminal not available, using fallback subprocess method")
 
             # Start rendering in background thread
             def render_thread():
@@ -1093,6 +1455,14 @@ class MyScene(Scene):
             print(f"Error starting render: {e}")
             return {'status': 'error', 'message': str(e)}
 
+    def _get_quality_flag(self, quality):
+        """Convert quality preset to manim flag or custom resolution"""
+        if quality in QUALITY_PRESETS:
+            return QUALITY_PRESETS[quality][0]  # Return the flag (e.g., '-ql', '-qm')
+        else:
+            # Custom resolution format: WIDTHxHEIGHT
+            return f'-r{quality}'
+
     def quick_preview(self, code, quality='480p', fps=15, format='mp4'):
         """Quick preview the animation with customizable quality settings"""
         global PYTHON_EXE
@@ -1116,8 +1486,20 @@ class MyScene(Scene):
             timestamp = int(time.time() * 1000)
             temp_file = os.path.join(PREVIEW_DIR, f'temp_preview_{timestamp}.py')
 
+            # Write file and ensure it's fully closed before proceeding
             with open(temp_file, 'w', encoding='utf-8') as f:
                 f.write(code)
+                f.flush()  # Flush to OS buffer
+                os.fsync(f.fileno())  # Force write to disk
+
+            # Ensure file is flushed to disk and fully closed
+            time.sleep(0.2)  # Increased delay to ensure file is available
+
+            # Verify file was created
+            if not os.path.exists(temp_file):
+                return {'status': 'error', 'message': f'Failed to create temporary file: {temp_file}'}
+
+            print(f"[PREVIEW] Created temp file: {temp_file}")
 
             # Create manim.cfg in the preview directory
             create_manim_config(PREVIEW_DIR)
@@ -1157,6 +1539,133 @@ class MyScene(Scene):
                 cmd.extend(['--format', format.lower()])
 
             print(f"Preview command: {' '.join(cmd)}")
+
+            # Send command to terminal PTY instead of running in subprocess
+            # Terminal is in ASSETS_DIR, but preview temp file is in PREVIEW_DIR, so we need full paths
+            # Build command string with proper quoting
+            cmd_parts = []
+            for arg in cmd:
+                # Quote arguments that have spaces or are paths
+                if ' ' in arg or arg == temp_file or '\\' in arg:
+                    cmd_parts.append(f'"{arg}"')
+                else:
+                    cmd_parts.append(arg)
+
+            cmd_string = ' '.join(cmd_parts)
+            print(f"[PREVIEW] Sending to terminal: {cmd_string}")
+
+            if app_state['terminal_process'] is not None:
+                try:
+                    # Clear terminal before running new preview to remove old errors
+                    if WINPTY_AVAILABLE and hasattr(app_state['terminal_process'], 'write'):
+                        app_state['terminal_process'].write('cls\r\n')
+                        time.sleep(0.2)
+
+                    # Send command to terminal
+                    if WINPTY_AVAILABLE and hasattr(app_state['terminal_process'], 'write'):
+                        app_state['terminal_process'].write(cmd_string + '\r\n')
+                    else:
+                        app_state['terminal_process'].stdin.write(cmd_string + '\n')
+                        app_state['terminal_process'].stdin.flush()
+
+                    app_state['is_previewing'] = True
+
+                    # Store temp file path for cleanup after preview
+                    preview_temp_file = temp_file
+
+                    # Start a background thread to watch for preview file and handle it
+                    def watch_preview():
+                        import time
+                        import shutil
+                        max_wait = 180  # 3 minutes for preview
+                        start_time = time.time()
+
+                        print(f"[PREVIEW WATCHER] Waiting for preview to complete...")
+                        print(f"[PREVIEW WATCHER] Temp file to clean up later: {preview_temp_file}")
+
+                        # Wait for file to appear in preview directory
+                        while time.time() - start_time < max_wait:
+                            time.sleep(2)
+
+                            # Look for video files in preview directory
+                            try:
+                                videos_dir = os.path.join(PREVIEW_DIR, 'videos')
+                                if os.path.exists(videos_dir):
+                                    for root, dirs, files in os.walk(videos_dir):
+                                        for file in files:
+                                            # Skip partial movie files - only look for the final combined MP4
+                                            if file.endswith('.mp4') and 'partial_movie_files' not in root:
+                                                preview_file = os.path.join(root, file)
+                                                print(f"[PREVIEW WATCHER] Found preview file: {preview_file}")
+
+                                                # Copy preview file to assets and track for cleanup on exit
+                                                try:
+                                                    os.makedirs(ASSETS_DIR, exist_ok=True)
+                                                    assets_path = os.path.join(ASSETS_DIR, file)
+
+                                                    # If file already exists, remove it first
+                                                    if os.path.exists(assets_path):
+                                                        os.remove(assets_path)
+
+                                                    print(f"[PREVIEW WATCHER] Copying to assets: {assets_path}")
+                                                    shutil.copy2(preview_file, assets_path)
+                                                    print(f"[PREVIEW WATCHER] Preview file copied to assets!")
+
+                                                    # Add to cleanup set - will be deleted when app closes
+                                                    app_state['preview_files_to_cleanup'].add(assets_path)
+                                                    print(f"[PREVIEW WATCHER] Added to cleanup set (total: {len(app_state['preview_files_to_cleanup'])} files)")
+
+                                                    # Notify frontend to load preview in preview box
+                                                    if app_state['window']:
+                                                        try:
+                                                            # Escape the path for JavaScript
+                                                            escaped_path = assets_path.replace('\\', '\\\\').replace('"', '\\"')
+                                                            app_state['window'].evaluate_js(
+                                                                f'if(window.previewCompleted){{window.previewCompleted("{escaped_path}")}}'
+                                                            )
+                                                            print(f"[PREVIEW WATCHER] Notified frontend to load preview")
+                                                        except Exception as js_err:
+                                                            print(f"[PREVIEW WATCHER] Error notifying frontend: {js_err}")
+
+                                                    app_state['is_previewing'] = False
+
+                                                    # Clean up temp file after successful preview
+                                                    try:
+                                                        if os.path.exists(preview_temp_file):
+                                                            os.remove(preview_temp_file)
+                                                            print(f"[PREVIEW WATCHER] Cleaned up temp file: {preview_temp_file}")
+                                                    except Exception as cleanup_err:
+                                                        print(f"[PREVIEW WATCHER] Error cleaning temp file: {cleanup_err}")
+
+                                                    return
+                                                except Exception as copy_err:
+                                                    print(f"[PREVIEW WATCHER ERROR] Failed to copy preview file: {copy_err}")
+
+                            except Exception as e:
+                                print(f"[PREVIEW WATCHER] Error checking files: {e}")
+
+                        print(f"[PREVIEW WATCHER] Timeout - preview file not found after {max_wait}s")
+                        app_state['is_previewing'] = False
+
+                        # Clean up temp file even on timeout
+                        try:
+                            if os.path.exists(preview_temp_file):
+                                os.remove(preview_temp_file)
+                                print(f"[PREVIEW WATCHER] Cleaned up temp file after timeout: {preview_temp_file}")
+                        except Exception as cleanup_err:
+                            print(f"[PREVIEW WATCHER] Error cleaning temp file: {cleanup_err}")
+
+                    import threading
+                    watcher_thread = threading.Thread(target=watch_preview, daemon=True)
+                    watcher_thread.start()
+
+                    return {'status': 'started', 'message': 'Preview command sent to terminal'}
+                except Exception as e:
+                    print(f"[PREVIEW ERROR] Failed to send to terminal: {e}")
+                    return {'status': 'error', 'message': f'Failed to send command to terminal: {e}'}
+
+            # Fallback to old subprocess method if terminal not available
+            print("[PREVIEW] Terminal not available, using fallback subprocess method")
 
             def preview_thread():
                 app_state['is_previewing'] = True
@@ -1509,7 +2018,7 @@ class MyScene(Scene):
 
             # Show save dialog
             result = app_state['window'].create_file_dialog(
-                webview.SAVE_DIALOG,
+                dialog_type=webview.SAVE_DIALOG,
                 save_filename=suggested_name,
                 file_types=('Video Files (*.mp4;*.mov;*.webm)', 'All Files (*.*)')
             )
@@ -1530,47 +2039,58 @@ class MyScene(Scene):
             if not save_path.endswith(('.mp4', '.mov', '.webm', '.avi')):
                 save_path += '.mp4'
 
-            # Move file from assets to user's location
-            print(f"[INFO] Moving file...")
+            # Copy file to user's location (use copy instead of move so we can clean up render folder properly)
+            print(f"[INFO] Copying file...")
             print(f"   From: {source_path}")
             print(f"   To: {save_path}")
 
-            shutil.move(source_path, save_path)
+            shutil.copy2(source_path, save_path)
 
-            print(f"[OK] File moved successfully!")
+            print(f"[OK] File copied successfully!")
 
-            # Now clean up temp folders since user saved successfully
-            print(f"\n[INFO] Cleaning up temp folders...")
-            videos_base = os.path.join(MEDIA_DIR, 'videos')
-            images_base = os.path.join(MEDIA_DIR, 'images')
-            folders_deleted = 0
+            # Check if source is from RENDER_DIR - if so, clear the entire render folder
+            if source_path.startswith(RENDER_DIR):
+                print(f"\n[INFO] Clearing render folder after save...")
+                try:
+                    clear_render_folder()
+                    print(f"[OK] Render folder cleared")
+                except Exception as e:
+                    print(f"[ERROR] Failed to clear render folder: {e}")
 
-            # Delete temp folders from videos
-            if os.path.exists(videos_base):
-                for folder in os.listdir(videos_base):
-                    if folder.startswith('temp_'):
-                        folder_path = os.path.join(videos_base, folder)
-                        try:
-                            shutil.rmtree(folder_path)
-                            folders_deleted += 1
-                            print(f"   [OK] Deleted: {folder}")
-                        except Exception as e:
-                            print(f"   [ERROR] Failed to delete {folder}: {e}")
+                print("=" * 60)
+            else:
+                # For other locations (assets/media), clean up temp folders as before
+                print(f"\n[INFO] Cleaning up temp folders...")
+                videos_base = os.path.join(MEDIA_DIR, 'videos')
+                images_base = os.path.join(MEDIA_DIR, 'images')
+                folders_deleted = 0
 
-            # Delete temp folders from images
-            if os.path.exists(images_base):
-                for folder in os.listdir(images_base):
-                    if folder.startswith('temp_'):
-                        folder_path = os.path.join(images_base, folder)
-                        try:
-                            shutil.rmtree(folder_path)
-                            folders_deleted += 1
-                            print(f"   [OK] Deleted: {folder}")
-                        except Exception as e:
-                            print(f"   [ERROR] Failed to delete {folder}: {e}")
+                # Delete temp folders from videos
+                if os.path.exists(videos_base):
+                    for folder in os.listdir(videos_base):
+                        if folder.startswith('temp_'):
+                            folder_path = os.path.join(videos_base, folder)
+                            try:
+                                shutil.rmtree(folder_path)
+                                folders_deleted += 1
+                                print(f"   [OK] Deleted: {folder}")
+                            except Exception as e:
+                                print(f"   [ERROR] Failed to delete {folder}: {e}")
 
-            print(f"[OK] Cleaned up {folders_deleted} temp folder(s)")
-            print("=" * 60)
+                # Delete temp folders from images
+                if os.path.exists(images_base):
+                    for folder in os.listdir(images_base):
+                        if folder.startswith('temp_'):
+                            folder_path = os.path.join(images_base, folder)
+                            try:
+                                shutil.rmtree(folder_path)
+                                folders_deleted += 1
+                                print(f"   [OK] Deleted: {folder}")
+                            except Exception as e:
+                                print(f"   [ERROR] Failed to delete {folder}: {e}")
+
+                print(f"[OK] Cleaned up {folders_deleted} temp folder(s)")
+                print("=" * 60)
 
             return {
                 'status': 'success',
@@ -1790,19 +2310,19 @@ class MyScene(Scene):
                     print("[TERMINAL PTY] Background reader thread started")
                     while True:
                         try:
-                            # Read from PTY - pywinpty.PTY.read() has no parameters, reads available data
+                            # Read from PTY - this will block until data is available
+                            # pywinpty.PTY.read() reads all available data
                             data = terminal_process.read()
                             if data:
                                 app_state['terminal_output_buffer'].append(data)
-                                # Only log data size, not content (to reduce log spam)
-                                # print(f"[TERMINAL PTY] Received {len(data)} bytes")
-                            time.sleep(0.05)  # 50ms polling interval
+                                # Uncomment to debug what's being received
+                                # print(f"[TERMINAL PTY] Received {len(data)} bytes: {repr(data[-100:])}")
                         except Exception as e:
                             error_msg = str(e).lower()
+                            # Ignore common non-error conditions
                             if "closed" not in error_msg and "timeout" not in error_msg and "no data" not in error_msg:
                                 print(f"[TERMINAL PTY ERROR] {e}")
-                            # Continue reading even on errors
-                            time.sleep(0.05)
+                            time.sleep(0.01)
                     print("[TERMINAL PTY] Background reader thread stopped")
 
                 terminal_thread = threading.Thread(target=read_terminal_output, daemon=True)
@@ -2260,7 +2780,7 @@ class MyScene(Scene):
         try:
             if app_state['window']:
                 result = app_state['window'].create_file_dialog(
-                    webview.SAVE_DIALOG,
+                    dialog_type=webview.SAVE_DIALOG,
                     save_filename=default_filename,
                     file_types=('Video Files (*.mp4;*.mov;*.gif;*.png)', 'All Files (*.*)')
                 )
@@ -3154,6 +3674,208 @@ class MyScene(Scene):
 
     # AI/LLM code completion removed
 
+    def get_video_files(self):
+        """Get list of all video files from media directory"""
+        try:
+            video_files = []
+            media_path = MEDIA_DIR
+
+            if not os.path.exists(media_path):
+                return {'status': 'success', 'videos': []}
+
+            # Supported video extensions
+            video_extensions = ('.mp4', '.mov', '.avi', '.webm', '.mkv', '.flv', '.m4v')
+
+            for root, dirs, files in os.walk(media_path):
+                for file in files:
+                    if file.lower().endswith(video_extensions):
+                        full_path = os.path.join(root, file)
+                        rel_path = os.path.relpath(full_path, media_path)
+
+                        # Get video duration using ffprobe if available
+                        try:
+                            duration = self._get_video_duration(full_path)
+                        except:
+                            duration = 0
+
+                        video_files.append({
+                            'name': file,
+                            'path': full_path,
+                            'relative_path': rel_path,
+                            'duration': duration
+                        })
+
+            # Sort by modification time (newest first)
+            video_files.sort(key=lambda x: os.path.getmtime(x['path']), reverse=True)
+
+            return {'status': 'success', 'videos': video_files}
+
+        except Exception as e:
+            print(f"[VIDEO LIST ERROR] {e}")
+            traceback.print_exc()
+            return {'status': 'error', 'message': str(e)}
+
+    def _get_video_duration(self, video_path):
+        """Get video duration in seconds using ffprobe"""
+        try:
+            cmd = [
+                'ffprobe',
+                '-v', 'error',
+                '-show_entries', 'format=duration',
+                '-of', 'default=noprint_wrappers=1:nokey=1',
+                video_path
+            ]
+
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=5)
+            if result.returncode == 0 and result.stdout.strip():
+                return float(result.stdout.strip())
+            return 0
+        except:
+            return 0
+
+    def trim_video(self, video_path, start_time, end_time, output_name):
+        """Trim video using FFmpeg"""
+        try:
+            # Validate inputs
+            if not os.path.exists(video_path):
+                return {'status': 'error', 'message': 'Video file not found'}
+
+            if not output_name:
+                output_name = f"trimmed_{os.path.basename(video_path)}"
+
+            # Ensure output has .mp4 extension
+            if not output_name.lower().endswith('.mp4'):
+                output_name += '.mp4'
+
+            output_path = os.path.join(MEDIA_DIR, output_name)
+
+            # Build FFmpeg command
+            cmd = ['ffmpeg', '-i', video_path, '-y']  # -y to overwrite
+
+            # Add start time if specified
+            if start_time > 0:
+                cmd.extend(['-ss', str(start_time)])
+
+            # Add duration/end time if specified
+            if end_time > 0:
+                if start_time > 0:
+                    duration = end_time - start_time
+                    cmd.extend(['-t', str(duration)])
+                else:
+                    cmd.extend(['-to', str(end_time)])
+
+            # Copy codec for fast processing (no re-encoding)
+            cmd.extend(['-c', 'copy', output_path])
+
+            print(f"[TRIM VIDEO] Running command: {' '.join(cmd)}")
+
+            # Run FFmpeg
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=300  # 5 minute timeout
+            )
+
+            if result.returncode == 0:
+                return {
+                    'status': 'success',
+                    'message': f'Video trimmed successfully: {output_name}',
+                    'output_path': output_path
+                }
+            else:
+                return {
+                    'status': 'error',
+                    'message': f'FFmpeg error: {result.stderr}'
+                }
+
+        except subprocess.TimeoutExpired:
+            return {'status': 'error', 'message': 'Video trimming timed out'}
+        except FileNotFoundError:
+            return {'status': 'error', 'message': 'FFmpeg not found. Please install FFmpeg.'}
+        except Exception as e:
+            print(f"[TRIM VIDEO ERROR] {e}")
+            traceback.print_exc()
+            return {'status': 'error', 'message': str(e)}
+
+    def combine_videos(self, video_paths, output_name):
+        """Combine multiple videos using FFmpeg"""
+        try:
+            # Validate inputs
+            if not video_paths or len(video_paths) < 2:
+                return {'status': 'error', 'message': 'Please select at least 2 videos to combine'}
+
+            # Validate all paths exist
+            for path in video_paths:
+                if not os.path.exists(path):
+                    return {'status': 'error', 'message': f'Video file not found: {os.path.basename(path)}'}
+
+            if not output_name:
+                output_name = f"combined_{int(time.time())}.mp4"
+
+            # Ensure output has .mp4 extension
+            if not output_name.lower().endswith('.mp4'):
+                output_name += '.mp4'
+
+            output_path = os.path.join(MEDIA_DIR, output_name)
+
+            # Create concat file list
+            concat_file = os.path.join(MEDIA_DIR, f'concat_list_{int(time.time())}.txt')
+
+            with open(concat_file, 'w', encoding='utf-8') as f:
+                for video_path in video_paths:
+                    # FFmpeg concat requires absolute paths with forward slashes
+                    abs_path = os.path.abspath(video_path).replace('\\', '/')
+                    f.write(f"file '{abs_path}'\n")
+
+            # Build FFmpeg command for concatenation
+            cmd = [
+                'ffmpeg',
+                '-f', 'concat',
+                '-safe', '0',
+                '-i', concat_file,
+                '-c', 'copy',  # Copy codec for fast processing
+                '-y',  # Overwrite output file
+                output_path
+            ]
+
+            print(f"[COMBINE VIDEOS] Running command: {' '.join(cmd)}")
+
+            # Run FFmpeg
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=600  # 10 minute timeout
+            )
+
+            # Clean up concat file
+            try:
+                os.remove(concat_file)
+            except:
+                pass
+
+            if result.returncode == 0:
+                return {
+                    'status': 'success',
+                    'message': f'Videos combined successfully: {output_name}',
+                    'output_path': output_path
+                }
+            else:
+                return {
+                    'status': 'error',
+                    'message': f'FFmpeg error: {result.stderr}'
+                }
+
+        except subprocess.TimeoutExpired:
+            return {'status': 'error', 'message': 'Video combining timed out'}
+        except FileNotFoundError:
+            return {'status': 'error', 'message': 'FFmpeg not found. Please install FFmpeg.'}
+        except Exception as e:
+            print(f"[COMBINE VIDEOS ERROR] {e}")
+            traceback.print_exc()
+            return {'status': 'error', 'message': str(e)}
+
 
 def find_free_port():
     """Find a free port on localhost"""
@@ -3280,10 +4002,30 @@ def start_app():
 
 
 def cleanup_on_exit():
-    """Clean up unsaved temp folders"""
+    """Clean up unsaved temp folders and preview files"""
     print("\n[CLEANUP] App is closing, cleaning up...")
 
     import shutil
+
+    # Clean up preview MP4 files that were copied to assets folder
+    print("[CLEANUP] Cleaning up preview files from assets folder...")
+    preview_cleanup_count = 0
+    if app_state['preview_files_to_cleanup']:
+        for preview_file in app_state['preview_files_to_cleanup']:
+            try:
+                if os.path.exists(preview_file):
+                    os.remove(preview_file)
+                    preview_cleanup_count += 1
+                    print(f"  Removed preview file: {os.path.basename(preview_file)}")
+            except Exception as e:
+                print(f"  Error removing preview file {os.path.basename(preview_file)}: {e}")
+
+        if preview_cleanup_count > 0:
+            print(f"[OK] Cleaned up {preview_cleanup_count} preview file(s) from assets")
+        else:
+            print("[OK] No preview files to clean from assets")
+    else:
+        print("[OK] No preview files to clean")
 
     # Clean up temp folders in MEDIA_DIR (only if user didn't save)
     print("[CLEANUP] Cleaning up unsaved temp folders...")

@@ -7,6 +7,7 @@
             <h2>
                 <i class="fas fa-question-circle"></i>
                 Help & Usage Guide
+                <span style="font-size: 12px; color: var(--text-secondary); font-weight: normal; margin-left: 10px;">v1.0.4.0</span>
             </h2>
             <button class="modal-close-btn" id="helpModalClose">
                 <i class="fas fa-times"></i>
@@ -126,6 +127,9 @@ class AudioExample(Scene):
             <!-- Terminal Commands -->
             <div class="help-section" style="margin-top: 20px;">
                 <h3><i class="fas fa-terminal"></i> Terminal Commands</h3>
+                <p style="color: var(--text-secondary); margin-bottom: 12px;">
+                    The terminal runs a real cmd.exe with auto-activated virtual environment.
+                </p>
                 <ul class="help-shortcut-list">
                     <li class="help-shortcut-item">
                         <span class="help-shortcut-name">List installed packages</span>
@@ -136,14 +140,70 @@ class AudioExample(Scene):
                         <span class="help-shortcut-key">pip install package-name</span>
                     </li>
                     <li class="help-shortcut-item">
-                        <span class="help-shortcut-name">Clear console</span>
-                        <span class="help-shortcut-key">clear</span>
+                        <span class="help-shortcut-name">Clear terminal</span>
+                        <span class="help-shortcut-key">cls</span>
                     </li>
                     <li class="help-shortcut-item">
-                        <span class="help-shortcut-name">Show help</span>
-                        <span class="help-shortcut-key">help</span>
+                        <span class="help-shortcut-name">Copy terminal output</span>
+                        <span class="help-shortcut-key">Ctrl+Shift+C (or select text)</span>
+                    </li>
+                    <li class="help-shortcut-item">
+                        <span class="help-shortcut-name">Paste into terminal</span>
+                        <span class="help-shortcut-key">Ctrl+Shift+V (or right-click)</span>
                     </li>
                 </ul>
+            </div>
+
+            <!-- Preview vs Render -->
+            <div class="help-section" style="margin-top: 20px;">
+                <h3><i class="fas fa-file-video"></i> Preview vs Render</h3>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                    <div style="padding: 12px; background: rgba(59, 130, 246, 0.1); border-radius: 6px;">
+                        <strong style="color: #3b82f6;">Quick Preview (F6)</strong>
+                        <ul style="color: var(--text-secondary); font-size: 13px; margin-top: 8px; line-height: 1.6;">
+                            <li>Low quality (480p 15fps)</li>
+                            <li>Fast rendering</li>
+                            <li>Files go to preview folder</li>
+                            <li>Auto-deleted on close</li>
+                            <li>Perfect for iteration</li>
+                        </ul>
+                    </div>
+                    <div style="padding: 12px; background: rgba(16, 185, 129, 0.1); border-radius: 6px;">
+                        <strong style="color: #10b981;">Final Render (F5)</strong>
+                        <ul style="color: var(--text-secondary); font-size: 13px; margin-top: 8px; line-height: 1.6;">
+                            <li>High quality (up to 4K 60fps)</li>
+                            <li>Longer rendering time</li>
+                            <li>Saved to your chosen location</li>
+                            <li>Kept permanently</li>
+                            <li>Ready for export/sharing</li>
+                        </ul>
+                    </div>
+                </div>
+            </div>
+
+            <!-- File Locations -->
+            <div class="help-section" style="margin-top: 20px;">
+                <h3><i class="fas fa-folder-open"></i> Important File Locations</h3>
+                <ul style="color: var(--text-secondary); line-height: 1.8;">
+                    <li><strong style="color: var(--accent-primary);">Assets:</strong> <code>C:\Users\&lt;you&gt;\.manim_studio\assets\</code></li>
+                    <li><strong style="color: var(--accent-primary);">Media:</strong> <code>C:\Users\&lt;you&gt;\.manim_studio\media\</code></li>
+                    <li><strong style="color: var(--accent-primary);">Preview:</strong> <code>C:\Users\&lt;you&gt;\.manim_studio\preview\</code> (temporary)</li>
+                    <li><strong style="color: var(--accent-primary);">Virtual Env:</strong> <code>C:\Users\&lt;you&gt;\.manim_studio\venvs\manim_studio_default\</code></li>
+                </ul>
+            </div>
+
+            <!-- About -->
+            <div style="margin-top: 24px; padding: 16px; background: var(--bg-secondary); border-radius: 8px; text-align: center;">
+                <h4 style="margin: 0 0 8px 0; color: var(--text-primary);">
+                    <i class="fas fa-film"></i> Manim Studio
+                </h4>
+                <p style="margin: 0; color: var(--text-secondary); font-size: 13px;">
+                    Version 1.0.4.0<br>
+                    A professional desktop environment for creating mathematical animations with Manim Community Edition.
+                </p>
+                <p style="margin: 12px 0 0 0; color: var(--text-secondary); font-size: 12px;">
+                    Updates are managed automatically via Microsoft Store
+                </p>
             </div>
         </div>
         <div class="modal-footer">

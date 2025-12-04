@@ -6,6 +6,7 @@
 // App state
 let currentFile = null;
 let editor = null;
+let isAppClosing = false; // Flag to prevent API calls during shutdown
 
 const job = {
     running: false,
@@ -18,6 +19,13 @@ const terminalHistory = {
     index: -1,
     maxSize: 50
 };
+
+// Auto-save state
+let autosaveTimer = null;
+let lastSavedCode = '';
+let hasUnsavedChanges = false;
+const AUTOSAVE_INTERVAL = 30000; // 30 seconds
+
 
 // Initialize Monaco Editor using AMD require
 function initializeEditor() {
@@ -128,8 +136,22 @@ class MyScene(Scene):
         });
 
         // Event listeners
+        let errorCheckTimeout = null;
         editor.onDidChangeModelContent(() => {
             updateLineCount();
+            // Mark as having unsaved changes
+            const currentCode = getEditorValue();
+            if (currentCode !== lastSavedCode) {
+                updateSaveStatus('unsaved');
+            }
+
+            // Debounced error checking (wait 500ms after typing stops)
+            if (errorCheckTimeout) {
+                clearTimeout(errorCheckTimeout);
+            }
+            errorCheckTimeout = setTimeout(() => {
+                checkCodeErrors();
+            }, 500);
         });
 
         editor.onDidChangeCursorPosition(() => {
@@ -234,7 +256,77 @@ function updateCurrentFile(filename) {
 
 function toast(message, type = 'info') {
     console.log(`[${type.toUpperCase()}] ${message}`);
-    appendConsole(message, type);
+
+    // Get or create toast container
+    let container = document.getElementById('toastContainer');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'toastContainer';
+        document.body.appendChild(container);
+    }
+
+    // Icon mapping
+    const icons = {
+        success: '✓',
+        error: '✕',
+        warning: '⚠',
+        info: 'ℹ'
+    };
+
+    // Create toast element
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+
+    // Create icon
+    const icon = document.createElement('div');
+    icon.className = 'toast-icon';
+    icon.textContent = icons[type] || icons.info;
+
+    // Create message
+    const messageEl = document.createElement('div');
+    messageEl.className = 'toast-message';
+    messageEl.textContent = message;
+
+    // Create progress bar
+    const progress = document.createElement('div');
+    progress.className = 'toast-progress';
+
+    // Assemble toast
+    toast.appendChild(icon);
+    toast.appendChild(messageEl);
+    toast.appendChild(progress);
+
+    // Add to container
+    container.appendChild(toast);
+
+    // Trigger show animation
+    setTimeout(() => {
+        toast.classList.add('show');
+    }, 10);
+
+    // Auto-dismiss after 3 seconds
+    const dismissTimeout = setTimeout(() => {
+        toast.classList.add('hiding');
+        setTimeout(() => {
+            toast.remove();
+        }, 300);
+    }, 3000);
+
+    // Pause on hover
+    toast.addEventListener('mouseenter', () => {
+        clearTimeout(dismissTimeout);
+        progress.style.animationPlayState = 'paused';
+    });
+
+    toast.addEventListener('mouseleave', () => {
+        progress.style.animationPlayState = 'running';
+        setTimeout(() => {
+            toast.classList.add('hiding');
+            setTimeout(() => {
+                toast.remove();
+            }, 300);
+        }, 1000);
+    });
 }
 
 // Console functions (for xterm.js terminal)
@@ -323,6 +415,9 @@ async function saveFile() {
             currentFile = res.path;
             updateCurrentFile(res.filename);
             toast('File saved', 'success');
+            // Update save status
+            lastSavedCode = code;
+            updateSaveStatus('saved');
         }
     } catch (err) {
         toast(`Save failed: ${err.message}`, 'error');
@@ -338,9 +433,325 @@ async function saveFileAs() {
             currentFile = res.path;
             updateCurrentFile(res.filename);
             toast('File saved', 'success');
+            // Update save status
+            lastSavedCode = code;
+            updateSaveStatus('saved');
         }
     } catch (err) {
         toast(`Save failed: ${err.message}`, 'error');
+    }
+}
+
+// Auto-save functions
+function updateSaveStatus(status) {
+    const indicator = document.getElementById('autosaveIndicator');
+    const statusText = document.getElementById('autosaveStatus');
+    const icon = indicator.querySelector('i');
+
+    // Remove all status classes
+    indicator.classList.remove('saved', 'saving', 'unsaved');
+
+    if (status === 'saved') {
+        indicator.classList.add('saved');
+        icon.className = 'fas fa-check-circle';
+        statusText.textContent = 'Saved';
+        hasUnsavedChanges = false;
+    } else if (status === 'saving') {
+        indicator.classList.add('saving');
+        icon.className = 'fas fa-spinner';
+        statusText.textContent = 'Saving...';
+    } else if (status === 'unsaved') {
+        indicator.classList.add('unsaved');
+        icon.className = 'fas fa-exclamation-circle';
+        statusText.textContent = 'Unsaved changes';
+        hasUnsavedChanges = true;
+    }
+}
+
+async function performAutosave() {
+    if (!editor || isAppClosing) return;
+
+    const code = getEditorValue();
+
+    // Don't autosave if code hasn't changed
+    if (code === lastSavedCode) {
+        return;
+    }
+
+    // Don't autosave empty code
+    if (!code.trim()) {
+        return;
+    }
+
+    try {
+        updateSaveStatus('saving');
+        const result = await pywebview.api.autosave_code(code);
+
+        if (result.status === 'success') {
+            console.log('[AUTOSAVE] Auto-saved successfully:', result.timestamp);
+            updateSaveStatus('saved');
+            lastSavedCode = code;
+        } else {
+            console.error('[AUTOSAVE] Failed:', result.message);
+            updateSaveStatus('unsaved');
+        }
+    } catch (err) {
+        console.error('[AUTOSAVE] Error:', err);
+        updateSaveStatus('unsaved');
+    }
+}
+
+function startAutosave() {
+    console.log('[AUTOSAVE] Starting auto-save timer (30 seconds)');
+
+    // Clear existing timer
+    if (autosaveTimer) {
+        clearInterval(autosaveTimer);
+    }
+
+    // Start new timer
+    autosaveTimer = setInterval(() => {
+        performAutosave();
+    }, AUTOSAVE_INTERVAL);
+}
+
+function stopAutosave() {
+    console.log('[AUTOSAVE] Stopping auto-save timer');
+    if (autosaveTimer) {
+        clearInterval(autosaveTimer);
+        autosaveTimer = null;
+    }
+}
+
+async function checkForAutosaves() {
+    try {
+        const result = await pywebview.api.get_autosave_files();
+
+        if (result.status === 'success' && result.files.length > 0) {
+            showAutosaveRecoveryDialog(result.files);
+        }
+    } catch (err) {
+        console.error('[AUTOSAVE] Error checking for autosaves:', err);
+    }
+}
+
+function showAutosaveRecoveryDialog(autosaves) {
+    // Get the most recent autosave
+    const latest = autosaves[0];
+
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay active';
+    modal.style.zIndex = '10000';
+
+    modal.innerHTML = `
+        <div class="modal-container" style="max-width: 500px;">
+            <div class="modal-header">
+                <h2>
+                    <i class="fas fa-history"></i>
+                    Recover Unsaved Work?
+                </h2>
+            </div>
+            <div class="modal-body">
+                <p style="margin: 0 0 16px 0; color: var(--text-secondary);">
+                    An auto-saved version of your work was found. Would you like to recover it?
+                </p>
+                <div style="padding: 12px; background: var(--bg-secondary); border-radius: 6px; margin-bottom: 16px;">
+                    <strong style="color: var(--text-primary);">Auto-saved:</strong>
+                    <span style="color: var(--text-secondary); margin-left: 8px;">${formatTimestamp(latest.timestamp)}</span>
+                    <br>
+                    <strong style="color: var(--text-primary);">File:</strong>
+                    <span style="color: var(--text-secondary); margin-left: 8px;">${latest.file_path || 'Untitled'}</span>
+                </div>
+                <p style="margin: 0; font-size: 13px; color: var(--text-secondary);">
+                    <i class="fas fa-info-circle"></i> Found ${autosaves.length} auto-save(s)
+                </p>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-secondary" id="discardAutosaveBtn">Discard</button>
+                <button class="btn btn-primary" id="recoverAutosaveBtn">
+                    <i class="fas fa-undo"></i> Recover
+                </button>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    // Handle recover button
+    document.getElementById('recoverAutosaveBtn').addEventListener('click', async () => {
+        try {
+            const result = await pywebview.api.load_autosave(latest.autosave_file);
+            if (result.status === 'success') {
+                setEditorValue(result.code);
+                lastSavedCode = result.code;
+                toast('Work recovered successfully', 'success');
+                modal.remove();
+            } else {
+                toast('Failed to recover work', 'error');
+            }
+        } catch (err) {
+            toast(`Recovery failed: ${err.message}`, 'error');
+        }
+    });
+
+    // Handle discard button
+    document.getElementById('discardAutosaveBtn').addEventListener('click', async () => {
+        try {
+            // Delete all autosaves
+            for (const autosave of autosaves) {
+                await pywebview.api.delete_autosave(autosave.autosave_file);
+            }
+            toast('Auto-saves discarded', 'info');
+            modal.remove();
+        } catch (err) {
+            console.error('[AUTOSAVE] Error discarding:', err);
+            modal.remove();
+        }
+    });
+}
+
+function formatTimestamp(timestamp) {
+    // Format: YYYYMMDD_HHMMSS -> readable format
+    const year = timestamp.substring(0, 4);
+    const month = timestamp.substring(4, 6);
+    const day = timestamp.substring(6, 8);
+    const hour = timestamp.substring(9, 11);
+    const minute = timestamp.substring(11, 13);
+    const second = timestamp.substring(13, 15);
+
+    return `${year}-${month}-${day} ${hour}:${minute}:${second}`;
+}
+
+// Code Error Checking Functions
+let currentErrorDecorations = [];
+
+async function checkCodeErrors() {
+    if (!editor || !pywebview?.api) {
+        console.log('[ERROR CHECK] Editor or API not ready');
+        return;
+    }
+
+    const code = getEditorValue();
+    console.log('[ERROR CHECK] Checking code, length:', code.length);
+
+    try {
+        const result = await pywebview.api.check_code_errors(code);
+        console.log('[ERROR CHECK] Result:', result);
+
+        if (result.status === 'success') {
+            displayErrors(result.errors);
+        }
+    } catch (err) {
+        console.error('[ERROR CHECK] Failed:', err);
+    }
+}
+
+function displayErrors(errors) {
+    const errorsList = document.getElementById('errorsList');
+    const errorCount = document.getElementById('errorCount');
+    const errorsPanel = document.getElementById('codeErrorsPanel');
+    const monacoEditor = document.getElementById('monacoEditor');
+
+    console.log('[ERROR DISPLAY] Displaying errors:', errors);
+
+    if (!errorsList || !errorCount || !errorsPanel || !monacoEditor) {
+        console.error('[ERROR DISPLAY] Error elements not found!');
+        return;
+    }
+
+    if (!errors || errors.length === 0) {
+        // No errors - hide panel and expand editor to full height
+        errorsPanel.style.display = 'none';
+        monacoEditor.style.height = '100%';
+
+        // Clear Monaco decorations
+        if (editor) {
+            currentErrorDecorations = editor.deltaDecorations(currentErrorDecorations, []);
+            editor.layout(); // Trigger layout recalculation
+        }
+        return;
+    }
+
+    // Errors found - show panel and adjust editor height
+    errorsPanel.style.display = 'block';
+    monacoEditor.style.height = 'calc(100% - 120px)';
+
+    // Display errors
+    errorCount.textContent = errors.length;
+    errorsList.innerHTML = '';
+
+    const decorations = [];
+
+    errors.forEach((error, index) => {
+        const errorItem = document.createElement('div');
+        errorItem.className = `error-item ${error.type === 'warning' ? 'warning' : ''}`;
+
+        errorItem.innerHTML = `
+            <i class="fas ${error.type === 'warning' ? 'fa-exclamation-triangle' : 'fa-times-circle'} error-icon"></i>
+            <div class="error-content">
+                <div class="error-location">Line ${error.line}${error.column ? `, Column ${error.column}` : ''}</div>
+                <div class="error-message">${escapeHtml(error.message)}</div>
+            </div>
+        `;
+
+        // Click to jump to error line
+        errorItem.addEventListener('click', () => {
+            if (editor && error.line > 0) {
+                editor.revealLineInCenter(error.line);
+                editor.setPosition({ lineNumber: error.line, column: error.column || 1 });
+                editor.focus();
+            }
+        });
+
+        errorsList.appendChild(errorItem);
+
+        // Add Monaco decoration for error line
+        if (error.line > 0) {
+            decorations.push({
+                range: new monaco.Range(error.line, 1, error.line, 1),
+                options: {
+                    isWholeLine: true,
+                    className: error.type === 'warning' ? 'warningLine' : 'errorLine',
+                    glyphMarginClassName: error.type === 'warning' ? 'warningGlyph' : 'errorGlyph',
+                    glyphMarginHoverMessage: { value: error.message }
+                }
+            });
+        }
+    });
+
+    // Apply decorations to editor
+    if (editor && decorations.length > 0) {
+        currentErrorDecorations = editor.deltaDecorations(currentErrorDecorations, decorations);
+    }
+
+    // Trigger layout recalculation after showing panel
+    if (editor) {
+        editor.layout();
+    }
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+function clearErrors() {
+    const errorsPanel = document.getElementById('codeErrorsPanel');
+    const monacoEditor = document.getElementById('monacoEditor');
+
+    // Hide panel and expand editor to full height
+    if (errorsPanel) {
+        errorsPanel.style.display = 'none';
+    }
+    if (monacoEditor) {
+        monacoEditor.style.height = '100%';
+    }
+
+    // Clear Monaco decorations
+    if (editor) {
+        currentErrorDecorations = editor.deltaDecorations(currentErrorDecorations, []);
+        editor.layout(); // Trigger layout recalculation
     }
 }
 
@@ -375,28 +786,15 @@ async function renderAnimation() {
         return;
     }
 
-    job.running = true;
-    job.type = 'render';
-    clearConsole();
-    setTerminalStatus('Rendering...', 'warning');
-    appendConsole('Starting render...', 'info');
-
+    // Just run the command in terminal - no UI messages
     try {
         const res = await pywebview.api.render_animation(code, quality, fps);
 
-        // Backend returns 'started' when render begins successfully
-        if (res.status === 'started' || res.status === 'success') {
-            appendConsole(res.message || 'Render in progress...', 'info');
-            // Actual completion handled by window.renderCompleted callback
-        } else if (res.status === 'error') {
-            appendConsole(`Render failed: ${res.message}`, 'error');
-            job.running = false;
-            setTerminalStatus('Error', 'error');
+        if (res.status === 'error') {
+            toast(`Render failed: ${res.message}`, 'error');
         }
     } catch (err) {
-        appendConsole(`Render error: ${err.message}`, 'error');
-        job.running = false;
-        setTerminalStatus('Error', 'error');
+        toast(`Render error: ${err.message}`, 'error');
     }
 }
 
@@ -430,26 +828,15 @@ async function quickPreview() {
         return;
     }
 
-    job.running = true;
-    job.type = 'preview';
-    clearConsole();
-    setTerminalStatus('Previewing...', 'warning');
-    appendConsole('Starting quick preview...', 'info');
-
+    // Just run the command in terminal - no UI messages
     try {
         const res = await pywebview.api.quick_preview(code, quality, fps);
 
-        // Backend returns 'started' when preview begins successfully
-        if (res.status === 'started' || res.status === 'success') {
-            appendConsole(res.message || 'Preview in progress...', 'info');
-            // Actual completion handled by window.previewCompleted callback
-        } else if (res.status === 'error') {
-            appendConsole(`Preview failed: ${res.message}`, 'error');
-            job.running = false;
-            setTerminalStatus('Error', 'error');
+        if (res.status === 'error') {
+            toast(`Preview failed: ${res.message}`, 'error');
         }
     } catch (err) {
-        appendConsole(`Preview error: ${err.message}`, 'error');
+        toast(`Preview error: ${err.message}`, 'error');
         job.running = false;
         setTerminalStatus('Error', 'error');
     }
@@ -638,8 +1025,11 @@ async function saveRenderedFile(sourcePath, suggestedName) {
             console.log('[SAVE] File saved successfully!');
             console.log('   Saved to:', result.path);
             toast('File saved successfully!', 'success');
-            // Refresh assets list to remove the file from assets folder
-            refreshAssets();
+            // Only refresh assets if the file was from assets folder, not render folder
+            // (render folder is already cleared after save)
+            if (!sourcePath.includes('render')) {
+                refreshAssets();
+            }
         } else if (result.status === 'cancelled') {
             console.log('[SAVE] User cancelled save dialog');
             toast('Save cancelled', 'info');
@@ -652,6 +1042,18 @@ async function saveRenderedFile(sourcePath, suggestedName) {
         toast('Error saving file', 'error');
     }
 }
+
+// Show save dialog for completed render
+window.showRenderSaveDialog = function(renderFilePath) {
+    console.log('💾 Showing save dialog for render:', renderFilePath);
+
+    // Extract filename from path for suggested name
+    const pathParts = renderFilePath.split(/[\\\/]/);
+    const filename = pathParts[pathParts.length - 1];
+
+    // Show save dialog
+    saveRenderedFile(renderFilePath, filename);
+};
 
 // Modified to accept autoSave parameter and trigger save dialog automatically
 window.renderCompleted = function(outputPath, autoSave = false, suggestedName = 'MyScene.mp4') {
@@ -1199,14 +1601,13 @@ async function startTerminalPolling() {
             if (res.status === 'success' && res.output && term) {
                 // Write PTY output directly to xterm.js terminal
                 term.write(res.output);
-
                 // Auto-scroll to bottom when new content arrives
                 term.scrollToBottom();
             }
         } catch (err) {
             console.error('[TERMINAL] Poll error:', err);
         }
-    }, 50); // Poll every 50ms for very responsive output
+    }, 20); // Poll every 20ms for very responsive output
 }
 
 async function executeCommand(command) {
@@ -1421,6 +1822,12 @@ document.addEventListener('DOMContentLoaded', () => {
     initializeEditor();
 });
 
+// Detect app closing to prevent API calls during shutdown
+window.addEventListener('beforeunload', () => {
+    console.log('[SHUTDOWN] App is closing, setting isAppClosing flag');
+    isAppClosing = true;
+});
+
 // Wait for PyWebView to be ready before using API
 window.addEventListener('pywebviewready', () => {
     console.log('============================================');
@@ -1453,7 +1860,16 @@ window.addEventListener('pywebviewready', () => {
     console.log('[INIT] 3. Refreshing assets...');
     refreshAssets();
 
-    console.log('[INIT] 4. Will initialize terminal when ready...');
+    console.log('[INIT] 4. Starting auto-save...');
+    startAutosave();
+
+    console.log('[INIT] 5. Checking for unsaved work (delayed)...');
+    // Delay autosave check to ensure app is fully loaded
+    setTimeout(() => {
+        checkForAutosaves();
+    }, 2000);  // Wait 2 seconds for app to fully initialize
+
+    console.log('[INIT] 6. Will initialize terminal when ready...');
     // Terminal initialization happens below (after Terminal constructor is loaded)
 
     // Auto-refresh system info every 1 minute (60000ms)
@@ -1522,6 +1938,7 @@ window.addEventListener('pywebviewready', () => {
     document.getElementById('previewBtn')?.addEventListener('click', quickPreview);
     document.getElementById('stopBtn')?.addEventListener('click', stopActiveRender);
     document.getElementById('refreshAssetsBtn')?.addEventListener('click', refreshAssets);
+    document.getElementById('clearErrorsBtn')?.addEventListener('click', clearErrors);
     document.getElementById('openAssetsFolderBtn')?.addEventListener('click', openMediaFolder);
     document.getElementById('openMediaFolderBtn')?.addEventListener('click', openMediaFolder);
     document.getElementById('refreshSystemBtn')?.addEventListener('click', loadSystemInfo);
@@ -1539,23 +1956,56 @@ window.addEventListener('pywebviewready', () => {
         });
     });
 
-    // Copy console output button
+    // Copy console output button - copies all terminal content
     document.getElementById('copyOutputBtn')?.addEventListener('click', () => {
-        const outputConsole = document.getElementById('outputConsole');
-        if (outputConsole) {
-            const text = outputConsole.innerText || outputConsole.textContent;
-            navigator.clipboard.writeText(text).then(() => {
-                appendConsole('✓ Terminal output copied to clipboard', 'success');
-            }).catch(err => {
-                appendConsole('✗ Failed to copy: ' + err.message, 'error');
-            });
+        if (term) {
+            try {
+                // Get all visible lines from the terminal buffer
+                const buffer = term.buffer.active;
+                let text = '';
+
+                // Read all lines from the buffer
+                for (let i = 0; i < buffer.length; i++) {
+                    const line = buffer.getLine(i);
+                    if (line) {
+                        text += line.translateToString(true) + '\n';
+                    }
+                }
+
+                // Copy to clipboard
+                navigator.clipboard.writeText(text).then(() => {
+                    toast('Copied', 'success');
+                    console.log('[TERMINAL] Copied', text.split('\n').length, 'lines to clipboard');
+                }).catch(err => {
+                    toast('Copy failed', 'error');
+                    console.error('[TERMINAL] Copy failed:', err);
+                });
+            } catch (err) {
+                console.error('[TERMINAL] Error copying terminal content:', err);
+                toast('Copy failed', 'error');
+            }
+        } else {
+            toast('Terminal not ready', 'warning');
         }
     });
 
-    // Clear console button
-    document.getElementById('clearOutputBtn')?.addEventListener('click', () => {
-        clearConsole();
-        appendConsole('Console cleared', 'info');
+    // Clear console button - reset terminal to original state
+    document.getElementById('clearOutputBtn')?.addEventListener('click', async () => {
+        if (term) {
+            // Clear the terminal screen
+            term.clear();
+
+            // Send cls command to PTY to reset cmd.exe
+            try {
+                await pywebview.api.send_terminal_command('cls\r\n');
+                toast('Cleared', 'success');
+            } catch (err) {
+                console.error('[TERMINAL] Error clearing:', err);
+                toast('Clear failed', 'error');
+            }
+        } else {
+            toast('Not ready', 'warning');
+        }
     });
 
     // Initialize xterm.js terminal emulator
@@ -1588,6 +2038,7 @@ window.addEventListener('pywebviewready', () => {
                 fontFamily: 'Consolas, "Courier New", monospace',
                 lineHeight: 1.2,
                 letterSpacing: 0,
+                windowsMode: true, // Enable Windows-specific PTY handling
                 theme: {
                     background: '#0c0c0c',
                     foreground: '#cccccc',
@@ -1615,8 +2066,6 @@ window.addEventListener('pywebviewready', () => {
                 scrollback: 10000,
                 fastScrollModifier: 'shift',
                 fastScrollSensitivity: 5,
-                convertEol: false,
-                windowsMode: true,
                 cols: 80,
                 rows: 24
             });
@@ -1666,10 +2115,15 @@ window.addEventListener('pywebviewready', () => {
                     lastCols = size.cols;
                     lastRows = size.rows;
 
-                    // Notify backend of terminal size
-                    pywebview.api.resize_terminal(size.cols, size.rows).catch(err => {
-                        console.error('[TERMINAL] Error resizing PTY:', err);
-                    });
+                    // Notify backend of terminal size (skip if app is closing)
+                    if (!isAppClosing) {
+                        pywebview.api.resize_terminal(size.cols, size.rows).catch(err => {
+                            // Ignore errors if app is closing
+                            if (!isAppClosing) {
+                                console.error('[TERMINAL] Error resizing PTY:', err);
+                            }
+                        });
+                    }
                 }
             }, 200);
 
@@ -1679,7 +2133,9 @@ window.addEventListener('pywebviewready', () => {
                 if (size.cols > 0 && size.rows > 0 && (size.cols !== lastCols || size.rows !== lastRows)) {
                     console.log(`[TERMINAL] Secondary auto-size adjustment: ${size.cols}x${size.rows}`);
                     term.resize(size.cols, size.rows);
-                    pywebview.api.resize_terminal(size.cols, size.rows).catch(() => {});
+                    if (!isAppClosing) {
+                        pywebview.api.resize_terminal(size.cols, size.rows).catch(() => {});
+                    }
                     lastCols = size.cols;
                     lastRows = size.rows;
                 }
@@ -1764,10 +2220,15 @@ window.addEventListener('pywebviewready', () => {
                             console.log(`[TERMINAL] Auto-resizing from ${lastCols}x${lastRows} to ${size.cols}x${size.rows}`);
                             term.resize(size.cols, size.rows);
 
-                            // Notify backend PTY of new size
-                            pywebview.api.resize_terminal(size.cols, size.rows).catch(err => {
-                                console.error('[TERMINAL] Error resizing PTY:', err);
-                            });
+                            // Notify backend PTY of new size (skip if app is closing)
+                            if (!isAppClosing) {
+                                pywebview.api.resize_terminal(size.cols, size.rows).catch(err => {
+                                    // Ignore errors if app is closing
+                                    if (!isAppClosing) {
+                                        console.error('[TERMINAL] Error resizing PTY:', err);
+                                    }
+                                });
+                            }
 
                             lastCols = size.cols;
                             lastRows = size.rows;
@@ -1786,7 +2247,9 @@ window.addEventListener('pywebviewready', () => {
                     const size = calculateTerminalSize();
                     if (size.cols > 0 && size.rows > 0 && term) {
                         term.resize(size.cols, size.rows);
-                        pywebview.api.resize_terminal(size.cols, size.rows).catch(() => {});
+                        if (!isAppClosing) {
+                            pywebview.api.resize_terminal(size.cols, size.rows).catch(() => {});
+                        }
                         lastCols = size.cols;
                         lastRows = size.rows;
                     }
