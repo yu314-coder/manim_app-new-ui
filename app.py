@@ -4,6 +4,7 @@ Uses PyWebView to create a native desktop window with HTML/CSS/JS UI
 Single executable with PyInstaller
 """
 import webview
+from webview import FileDialog
 import os
 import sys
 import tempfile
@@ -15,8 +16,16 @@ from pathlib import Path
 import re
 import socket
 
+# Fix encoding issues on Windows - ensure UTF-8 encoding for stdout/stderr
+if sys.platform == 'win32':
+    import io
+    if sys.stdout.encoding != 'utf-8':
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+    if sys.stderr.encoding != 'utf-8':
+        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
+
 # App version
-APP_VERSION = "1.0.5.0"
+APP_VERSION = "1.0.7.0"
 
 # Terminal emulation with PTY support
 try:
@@ -72,6 +81,70 @@ def get_clean_environment():
     env['PYTHONLEGACYWINDOWSFSENCODING'] = '0'
     env['PYTHONUTF8'] = '1'
 
+    # Additional UTF-8 encoding for LaTeX and text rendering
+    env['LANG'] = 'en_US.UTF-8'
+    env['LC_ALL'] = 'en_US.UTF-8'
+    env['LC_CTYPE'] = 'en_US.UTF-8'
+    env['LC_MESSAGES'] = 'en_US.UTF-8'
+
+    # Font configuration for Pango - ensure system fonts are accessible
+    # DO NOT set these to empty strings - it breaks font rendering
+    # Instead, ensure Windows font directory is accessible
+    if os.name == 'nt':
+        # Windows font directory
+        windows_fonts = r'C:\Windows\Fonts'
+        if os.path.exists(windows_fonts):
+            # Set font config paths for Pango/fontconfig
+            env['FONTCONFIG_PATH'] = windows_fonts
+            env['FC_CONFIG_DIR'] = windows_fonts
+            # Also ensure Pango can find fonts
+            env['PANGO_RC_FILE'] = ''  # Let Pango use default
+            print(f"[ENV] Set font paths to: {windows_fonts}")
+
+        # Configure Pango for better Windows font rendering
+        env['PANGOCAIRO_BACKEND'] = 'fontconfig'  # Use fontconfig for font lookup
+        env['PANGO_ALIASING'] = 'enabled'  # Enable font aliasing
+        # Force Pango to use specific fonts for ASCII characters
+        env['PANGO_DEFAULT_FONT'] = 'Arial'  # Use Arial as fallback (has all ASCII chars)
+
+        # Use custom fontconfig configuration file (fixes "Cannot load default config file" error)
+        fontconfig_file = os.path.join(os.path.dirname(__file__), 'fonts.conf')
+        if os.path.exists(fontconfig_file):
+            env['FONTCONFIG_FILE'] = fontconfig_file
+            env['FONTCONFIG_PATH'] = windows_fonts
+            print(f"[ENV] Using fontconfig file: {fontconfig_file}")
+        else:
+            print(f"[ENV] Warning: fontconfig file not found at {fontconfig_file}")
+
+        print(f"[ENV] Configured Pango backend and default font")
+
+    # Ensure fontconfig can build cache (critical for Pango font discovery)
+    # Don't set XDG paths to empty - let them use system defaults
+    if 'XDG_CACHE_HOME' in env:
+        # Keep existing cache location
+        pass
+    if 'XDG_DATA_HOME' in env:
+        # Keep existing data location
+        pass
+
+    # Force LaTeX to use UTF-8 encoding (fixes subscript rendering issues)
+    env['latex_encoding'] = 'utf-8'
+    env['MANIM_TEX_TEMPLATE'] = 'default'  # Use Manim's default UTF-8 template
+
+    # Ensure console uses UTF-8 on Windows
+    if os.name == 'nt':
+        env['PYTHONLEGACYSTDIO'] = '0'
+        # Windows console code page for UTF-8
+        env['PYTHONIOENCODING'] = 'utf-8:replace'
+
+    # Force tqdm and other progress bars to display
+    # Make Python think it's running in a terminal with TTY
+    env['TERM'] = 'xterm-256color'  # Indicate we support ANSI colors
+    env['COLORTERM'] = 'truecolor'  # Indicate we support true color
+    # Force progress bars to show (tqdm checks these)
+    env['FORCE_COLOR'] = '1'
+    env['PYTHONUNBUFFERED'] = '1'  # Disable Python output buffering
+
     # If frozen, ensure exe directory is not interfering
     if getattr(sys, 'frozen', False):
         exe_dir = os.path.dirname(os.path.abspath(sys.executable))
@@ -104,6 +177,284 @@ def get_clean_environment():
         print(f"[ENV] PATH configured with {len(current_paths)} entries")
 
     return env
+
+# Function to detect GPU availability
+def detect_gpu():
+    """
+    Detect if the system has a GPU available for OpenGL rendering
+    Prioritizes discrete GPUs (NVIDIA, AMD) over integrated GPUs (Intel)
+    Returns: dict with 'available' (bool for OpenGL accel), 'gpu_present' (bool for any GPU), and 'info' (str) keys
+    """
+    gpu_info = {
+        'available': False,       # True only for discrete GPUs (NVIDIA/AMD) - enables GPU acceleration
+        'gpu_present': False,     # True for any GPU (including Intel) - for performance monitoring
+        'info': 'No GPU detected',
+        'vendor': '',
+        'renderer': ''
+    }
+
+    discrete_gpu_keywords = ['nvidia', 'geforce', 'rtx', 'gtx', 'quadro', 'amd', 'radeon', 'rx']
+    integrated_gpu_keywords = ['intel', 'uhd', 'iris', 'hd graphics']
+
+    try:
+        # Try to import OpenGL to test GPU availability
+        try:
+            from OpenGL import GL
+            from OpenGL.GL import shaders
+            import pygame
+
+            print("[GPU DETECT] Testing OpenGL capability via pygame...")
+
+            # Initialize pygame with OpenGL context
+            pygame.init()
+            pygame.display.set_mode((1, 1), pygame.OPENGL | pygame.HIDDEN)
+
+            # Get GPU info
+            vendor = GL.glGetString(GL.GL_VENDOR)
+            renderer = GL.glGetString(GL.GL_RENDERER)
+            version = GL.glGetString(GL.GL_VERSION)
+
+            if vendor and renderer:
+                vendor_str = vendor.decode('utf-8') if isinstance(vendor, bytes) else str(vendor)
+                renderer_str = renderer.decode('utf-8') if isinstance(renderer, bytes) else str(renderer)
+                version_str = version.decode('utf-8') if isinstance(version, bytes) else str(version)
+
+                gpu_info['vendor'] = vendor_str
+                gpu_info['renderer'] = renderer_str
+
+                print(f"[GPU DETECT] OpenGL Vendor: {vendor_str}")
+                print(f"[GPU DETECT] OpenGL Renderer: {renderer_str}")
+                print(f"[GPU DETECT] OpenGL Version: {version_str}")
+
+                # Check if it's a discrete GPU (NVIDIA/AMD) - these are preferred for OpenGL
+                renderer_lower = renderer_str.lower()
+                is_discrete = any(keyword in renderer_lower for keyword in discrete_gpu_keywords)
+                is_integrated = any(keyword in renderer_lower for keyword in integrated_gpu_keywords)
+
+                if is_discrete:
+                    # Discrete GPU found - excellent for OpenGL
+                    gpu_info['available'] = True
+                    gpu_info['gpu_present'] = True
+                    gpu_info['info'] = f"{vendor_str} - {renderer_str} (Recommended)"
+                    print(f"[GPU DETECT] OK Discrete GPU detected (NVIDIA/AMD): {gpu_info['info']}")
+                elif is_integrated:
+                    # Integrated GPU - can use OpenGL but with reduced performance
+                    gpu_info['available'] = True  # Changed from False - allow integrated GPU usage
+                    gpu_info['gpu_present'] = True
+                    gpu_info['info'] = f"Integrated GPU ({renderer_str}) - Performance may be limited"
+                    print(f"[GPU DETECT] WARNING Integrated GPU detected (Intel): {renderer_str} - usable but discrete GPU recommended for better performance")
+                else:
+                    # Unknown GPU type - allow it
+                    gpu_info['available'] = True
+                    gpu_info['gpu_present'] = True
+                    gpu_info['info'] = f"{vendor_str} - {renderer_str}"
+                    print(f"[GPU DETECT] OK GPU detected: {gpu_info['info']}")
+
+            pygame.quit()
+
+        except ImportError:
+            # OpenGL not installed, try alternative detection methods
+            print("[GPU DETECT] OpenGL not available, trying alternative methods...")
+
+            # Windows: Use wmic to detect GPU
+            if os.name == 'nt':
+                try:
+                    result = subprocess.run(
+                        ['wmic', 'path', 'win32_VideoController', 'get', 'name'],
+                        capture_output=True,
+                        text=True,
+                        timeout=5,
+                        creationflags=subprocess.CREATE_NO_WINDOW
+                    )
+
+                    if result.returncode == 0:
+                        lines = result.stdout.strip().split('\n')
+                        # First line is header "Name", rest are GPU names
+                        gpu_names = [line.strip() for line in lines[1:] if line.strip()]
+
+                        if gpu_names:
+                            # Filter out Microsoft Basic Display Adapter (software renderer)
+                            hardware_gpus = [gpu for gpu in gpu_names if 'basic display' not in gpu.lower()]
+
+                            if hardware_gpus:
+                                # Prioritize discrete GPUs
+                                discrete_gpus = [gpu for gpu in hardware_gpus if any(keyword in gpu.lower() for keyword in discrete_gpu_keywords)]
+
+                                if discrete_gpus:
+                                    # Found discrete GPU (NVIDIA/AMD)
+                                    gpu_info['available'] = True
+                                    gpu_info['gpu_present'] = True
+                                    gpu_info['renderer'] = discrete_gpus[0]
+                                    gpu_info['info'] = discrete_gpus[0]
+                                    print(f"[GPU DETECT] OK Discrete GPU found via wmic: {gpu_info['info']}")
+                                else:
+                                    # Only integrated GPU found
+                                    integrated_gpus = [gpu for gpu in hardware_gpus if any(keyword in gpu.lower() for keyword in integrated_gpu_keywords)]
+                                    if integrated_gpus:
+                                        gpu_info['available'] = True  # Changed from False - allow integrated GPU usage
+                                        gpu_info['gpu_present'] = True
+                                        gpu_info['renderer'] = integrated_gpus[0]
+                                        gpu_info['info'] = f"Integrated GPU ({integrated_gpus[0]}) - Performance may be limited"
+                                        print(f"[GPU DETECT] WARNING Integrated GPU detected: {integrated_gpus[0]} - usable but discrete GPU recommended")
+                                    else:
+                                        # Unknown GPU type - allow it
+                                        gpu_info['available'] = True
+                                        gpu_info['gpu_present'] = True
+                                        gpu_info['renderer'] = hardware_gpus[0]
+                                        gpu_info['info'] = hardware_gpus[0]
+                                        print(f"[GPU DETECT] GPU found via wmic: {gpu_info['info']}")
+                            else:
+                                gpu_info['info'] = 'Software renderer only'
+                                print("[GPU DETECT] Only software renderer detected")
+                        else:
+                            gpu_info['info'] = 'No GPU found'
+                            print("[GPU DETECT] No GPU detected via wmic")
+
+                except Exception as e:
+                    print(f"[GPU DETECT] wmic detection failed: {e}")
+                    gpu_info['info'] = 'GPU detection failed'
+
+            # Linux: Try lspci
+            elif os.name == 'posix':
+                try:
+                    result = subprocess.run(
+                        ['lspci'],
+                        capture_output=True,
+                        text=True,
+                        timeout=5
+                    )
+
+                    if result.returncode == 0:
+                        # Look for VGA or 3D controller lines
+                        for line in result.stdout.split('\n'):
+                            if 'VGA' in line or '3D controller' in line:
+                                gpu_info['available'] = True
+                                gpu_info['info'] = line.split(': ', 1)[1] if ': ' in line else line
+                                gpu_info['renderer'] = gpu_info['info']
+                                print(f"[GPU DETECT] Found GPU via lspci: {gpu_info['info']}")
+                                break
+
+                except Exception as e:
+                    print(f"[GPU DETECT] lspci detection failed: {e}")
+                    gpu_info['info'] = 'GPU detection failed'
+
+    except Exception as e:
+        print(f"[GPU DETECT] Error during GPU detection: {e}")
+        gpu_info['info'] = f'Detection error: {str(e)}'
+
+    return gpu_info
+
+# Function to get performance metrics
+def get_performance_metrics():
+    """
+    Get current system performance metrics including CPU, GPU, RAM, and VRAM
+    Returns: dict with performance data
+    """
+    metrics = {
+        'cpu_percent': 0.0,
+        'cpu_count': 0,
+        'ram_used_gb': 0.0,
+        'ram_total_gb': 0.0,
+        'ram_percent': 0.0,
+        'gpu_percent': 0.0,
+        'vram_used_gb': 0.0,
+        'vram_total_gb': 0.0,
+        'vram_percent': 0.0,
+        'gpu_name': 'N/A',
+        'timestamp': time.time()
+    }
+
+    try:
+        # CPU and RAM metrics using psutil
+        try:
+            import psutil
+
+            # CPU usage
+            metrics['cpu_percent'] = psutil.cpu_percent(interval=0.1)
+            metrics['cpu_count'] = psutil.cpu_count()
+
+            # RAM usage
+            mem = psutil.virtual_memory()
+            metrics['ram_used_gb'] = mem.used / (1024**3)
+            metrics['ram_total_gb'] = mem.total / (1024**3)
+            metrics['ram_percent'] = mem.percent
+
+        except ImportError:
+            print("[PERF] psutil not available, skipping CPU/RAM metrics")
+
+        # GPU metrics
+        try:
+            # Try NVIDIA GPU first using nvidia-smi
+            if os.name == 'nt':
+                nvidia_smi = 'nvidia-smi'
+            else:
+                nvidia_smi = 'nvidia-smi'
+
+            # Query GPU utilization and memory
+            result = subprocess.run(
+                [nvidia_smi, '--query-gpu=utilization.gpu,memory.used,memory.total,name', '--format=csv,noheader,nounits'],
+                capture_output=True,
+                text=True,
+                timeout=2,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+            )
+
+            if result.returncode == 0:
+                lines = result.stdout.strip().split('\n')
+                if lines and lines[0]:
+                    # Parse first GPU
+                    parts = [p.strip() for p in lines[0].split(',')]
+                    if len(parts) >= 4:
+                        metrics['gpu_percent'] = float(parts[0])
+                        metrics['vram_used_gb'] = float(parts[1]) / 1024  # Convert MB to GB
+                        metrics['vram_total_gb'] = float(parts[2]) / 1024  # Convert MB to GB
+                        metrics['vram_percent'] = (metrics['vram_used_gb'] / metrics['vram_total_gb'] * 100) if metrics['vram_total_gb'] > 0 else 0
+                        metrics['gpu_name'] = parts[3]
+                        print(f"[PERF] NVIDIA GPU detected: {metrics['gpu_name']}")
+
+        except FileNotFoundError:
+            # nvidia-smi not found, try AMD or Intel
+            print("[PERF] nvidia-smi not found, trying alternative GPU detection")
+
+            # Try Windows Performance Counter for GPU (works for Intel, AMD, NVIDIA)
+            if os.name == 'nt':
+                try:
+                    # Use wmic to get GPU info
+                    result = subprocess.run(
+                        ['wmic', 'path', 'win32_VideoController', 'get', 'name,AdapterRAM'],
+                        capture_output=True,
+                        text=True,
+                        timeout=2,
+                        creationflags=subprocess.CREATE_NO_WINDOW
+                    )
+
+                    if result.returncode == 0:
+                        lines = result.stdout.strip().split('\n')
+                        if len(lines) > 1:
+                            # Parse GPU name and VRAM
+                            for line in lines[1:]:
+                                parts = line.strip().split()
+                                if parts and 'basic display' not in line.lower():
+                                    # Try to extract VRAM (last number in line)
+                                    try:
+                                        vram_bytes = int(parts[-1])
+                                        metrics['vram_total_gb'] = vram_bytes / (1024**3)
+                                        metrics['gpu_name'] = ' '.join(parts[:-1])
+                                        print(f"[PERF] GPU detected via wmic: {metrics['gpu_name']}")
+                                        break
+                                    except (ValueError, IndexError):
+                                        pass
+
+                except Exception as e:
+                    print(f"[PERF] wmic GPU detection failed: {e}")
+
+        except Exception as e:
+            print(f"[PERF] GPU metrics collection failed: {e}")
+
+    except Exception as e:
+        print(f"[PERF] Error collecting performance metrics: {e}")
+
+    return metrics
 
 # Function to find system Python using 'where python' command
 def find_system_python():
@@ -649,7 +1000,8 @@ app_state = {
     'preview_files_to_cleanup': set(),  # Track preview MP4 files copied to assets for cleanup on exit
     'terminal_process': None,  # Persistent cmd.exe session
     'terminal_thread': None,  # Thread for reading terminal output
-    'terminal_output_buffer': [],  # Buffer for terminal output
+    'terminal_output_buffer': [],  # Buffer for terminal output (gets cleared when sent to frontend)
+    'terminal_error_buffer': [],  # Persistent buffer for error checking (keeps last 1000 lines)
     'settings': {
         'quality': '720p',
         'format': 'MP4 Video',
@@ -663,23 +1015,125 @@ app_state = {
 
 # Quality presets
 QUALITY_PRESETS = {
+    "8K": ("-qk", 7680, 4320),      # 8K quality (7680x4320 60fps) - uses -qk flag
     "4K": ("-qk", 3840, 2160),      # 4K quality (3840x2160 60fps)
-    "2K": ("-qp", 2560, 1440),      # 2K quality (2560x1440 60fps)
+    "1440p": ("-qp", 2560, 1440),   # 1440p quality (2560x1440 60fps)
     "1080p": ("-qh", 1920, 1080),   # High quality (1920x1080 60fps)
     "720p": ("-qm", 1280, 720),     # Medium quality (1280x720 30fps)
     "480p": ("-ql", 854, 480),      # Low quality (854x480 15fps)
 }
 
+def safe_evaluate_js(window, js_code):
+    """
+    Safely evaluate JavaScript on a webview window.
+    Returns True if successful, False if window is closed/disposed.
+    """
+    if not window:
+        return False
+
+    try:
+        window.evaluate_js(js_code)
+        return True
+    except Exception as e:
+        error_msg = str(e).lower()
+        if 'disposed' in error_msg or 'webview2' in error_msg:
+            print(f"[WINDOW] Window has been closed/disposed - skipping JS evaluation")
+            return False
+        else:
+            print(f"[WINDOW] Error evaluating JS: {e}")
+            raise  # Re-raise if it's not a disposal error
+
+def sanitize_code_for_latex(code):
+    """
+    Remove invisible Unicode characters that cause LaTeX rendering issues.
+
+    These characters (like U+2068 FIRST STRONG ISOLATE) can corrupt LaTeX subscripts
+    and cause them to display as garbled text showing Unicode code points.
+
+    Removes:
+    - U+200B-U+200D: Zero-width spaces
+    - U+200E-U+200F: Text direction marks
+    - U+202A-U+202E: Bidirectional formatting
+    - U+202F: Narrow no-break space
+    - U+2060-U+206F: Invisible operators, FSI, PDI, etc. (includes U+2068!)
+    - U+FEFF: Zero-width no-break space (BOM)
+    - U+00A0: No-break space (convert to regular space)
+    - U+00AD: Soft hyphen
+    """
+    import re
+
+    # First, scan for and log any problematic characters
+    problematic_chars = []
+    for i, char in enumerate(code):
+        code_point = ord(char)
+        if (0x200B <= code_point <= 0x200D or  # Zero-width spaces
+            code_point in (0x200E, 0x200F) or   # LTR/RTL marks
+            0x202A <= code_point <= 0x202E or   # Bidi formatting
+            code_point == 0x202F or              # Narrow no-break space
+            0x2060 <= code_point <= 0x206F or   # Invisible operators including U+2068
+            code_point == 0xFEFF or              # BOM
+            code_point == 0x00AD):               # Soft hyphen
+            # Find context (20 chars before and after)
+            start = max(0, i - 20)
+            end = min(len(code), i + 20)
+            context = code[start:end]
+            context_display = context.replace('\n', '\\n').replace('\r', '\\r')
+            problematic_chars.append({
+                'char': char,
+                'code_point': f'U+{code_point:04X}',
+                'position': i,
+                'context': context_display
+            })
+
+    if problematic_chars:
+        print(f"[LATEX SANITIZE] ⚠️ Found {len(problematic_chars)} invisible Unicode characters:")
+        for item in problematic_chars[:10]:  # Show first 10
+            print(f"  - {item['code_point']} at position {item['position']}")
+            print(f"    Context: ...{item['context']}...")
+
+    # Pattern for all problematic invisible characters
+    invisible_chars_pattern = re.compile(
+        r'[\u200B-\u200D'  # Zero-width spaces
+        r'\u200E\u200F'     # Left-to-right/right-to-left marks
+        r'\u202A-\u202E'    # Bidirectional formatting
+        r'\u202F'           # Narrow no-break space
+        r'\u2060-\u206F'    # Invisible operators, FSI (U+2068), PDI, etc.
+        r'\uFEFF'           # Zero-width no-break space (BOM)
+        r'\u00AD]'          # Soft hyphen
+    )
+
+    # Remove invisible characters
+    cleaned = invisible_chars_pattern.sub('', code)
+
+    # Convert no-break spaces to regular spaces
+    cleaned = cleaned.replace('\u00A0', ' ')
+
+    # Count how many characters were removed for logging
+    removed_count = len(code) - len(cleaned)
+    if removed_count > 0:
+        print(f"[LATEX SANITIZE] ✅ Removed {removed_count} invisible Unicode characters")
+    else:
+        print(f"[LATEX SANITIZE] No invisible characters found in code")
+
+    return cleaned
+
 def create_manim_config(script_dir):
     """Create manim.cfg in the script directory for proper asset path configuration"""
     config_path = os.path.join(script_dir, 'manim.cfg')
+
+    # Use Manim's default template - don't override with custom template
+    # The default template already has proper UTF-8 support
     config_content = f"""[CLI]
 # Manim Studio Configuration
 assets_dir = {ASSETS_DIR}
 media_dir = {MEDIA_DIR}
+# Unlimited cache - never delete partial movie files
+max_files_cached = -1
+# Ensure UTF-8 input encoding for LaTeX (critical for subscripts!)
+input_file_encoding = utf-8
 """
     try:
-        with open(config_path, 'w', encoding='utf-8') as f:
+        with open(config_path, 'w', encoding='utf-8', newline='\n') as f:
             f.write(config_content)
         print(f"[CONFIG] Created manim.cfg at: {config_path}")
         return True
@@ -757,10 +1211,133 @@ def save_settings():
     except Exception as e:
         print(f"Error saving settings: {e}")
 
+def check_terminal_output_for_errors():
+    """
+    Check terminal output buffer for error patterns that indicate manim/python failure.
+    Returns (has_error, error_message) tuple.
+    """
+    # Use the persistent error buffer instead of the display buffer
+    # The error buffer doesn't get cleared and keeps accumulating output
+    output = ''.join(app_state['terminal_error_buffer'])
+
+    # Debug: only print buffer size occasionally (reduced spam)
+    # Uncomment for debugging:
+    # print(f"[ERROR CHECK] Error buffer has {len(app_state['terminal_error_buffer'])} items, {len(output)} chars total")
+
+    # Common error patterns - check in order of specificity
+    error_patterns = [
+        'SyntaxError:',
+        'NameError:',
+        'ImportError:',
+        'ModuleNotFoundError:',
+        'AttributeError:',
+        'TypeError:',
+        'ValueError:',
+        'IndentationError:',
+        'Traceback (most recent call last)',
+        'manim.utils.module_ops.SceneNotFound',
+        'FileNotFoundError:',
+        'Exception:'
+    ]
+
+    for pattern in error_patterns:
+        if pattern in output:
+            print(f"[ERROR CHECK] Found error pattern: {pattern}")
+            # Extract error message from the output
+            lines = output.split('\n')
+            error_msg = None
+            for i, line in enumerate(lines):
+                if pattern in line:
+                    # Get this line and the next few lines for context
+                    error_msg = line.strip()
+                    # Get up to 2 more lines for context
+                    for j in range(1, min(3, len(lines) - i)):
+                        next_line = lines[i + j].strip()
+                        if next_line:
+                            error_msg += ' ' + next_line
+                    break
+
+            if not error_msg:
+                error_msg = f"Error detected: {pattern}"
+
+            print(f"[ERROR CHECK] Error message extracted: {error_msg[:100]}")
+            return (True, error_msg[:200])  # Limit error message length
+
+    return (False, None)
+
+
 def extract_scene_name(code):
-    """Extract the scene class name from code"""
-    match = re.search(r'class\s+(\w+)\s*\(\s*Scene\s*\)', code)
-    return match.group(1) if match else None
+    """
+    Extract the scene class name from code by dynamically importing it.
+    This approach matches manim's own scene detection using inspect module.
+    Works with any Scene subclass regardless of name or inheritance chain.
+    """
+    import inspect
+    import importlib.util
+    import sys
+
+    temp_module_name = None
+    try:
+        # Create a temporary module from the code
+        temp_module_name = f"_temp_manim_scene_{int(time.time() * 1000000)}"
+        spec = importlib.util.spec_from_loader(temp_module_name, loader=None)
+        if spec is None:
+            # Fallback to regex if module creation fails
+            match = re.search(r'class\s+(\w+)\s*\([^)]*\):', code)
+            return match.group(1) if match else None
+
+        temp_module = importlib.util.module_from_spec(spec)
+        sys.modules[temp_module_name] = temp_module
+
+        # Execute the code in the module's namespace
+        exec(code, temp_module.__dict__)
+
+        # Find all Scene subclasses in the module
+        # Import Scene from manim to check inheritance
+        try:
+            from manim import Scene
+
+            scene_classes = []
+            for name, obj in inspect.getmembers(temp_module, inspect.isclass):
+                # Check if it's a Scene subclass but not Scene itself
+                try:
+                    if obj != Scene and issubclass(obj, Scene):
+                        # Check if it's defined in this module (not imported)
+                        if obj.__module__ == temp_module_name:
+                            scene_classes.append(name)
+                except TypeError:
+                    # issubclass can raise TypeError if obj is not a class
+                    continue
+
+            # Return the first scene class found
+            return scene_classes[0] if scene_classes else None
+
+        except ImportError:
+            # If manim is not available, fall back to regex
+            print("[WARNING] Manim not available for scene detection, using regex fallback")
+            match = re.search(r'class\s+(\w+)\s*\([^)]*\):', code)
+            return match.group(1) if match else None
+
+    except SyntaxError as e:
+        # Code has syntax errors - can't execute it
+        print(f"[WARNING] Syntax error in code, using regex fallback: {e}")
+        # Try regex as last resort
+        match = re.search(r'class\s+(\w+)\s*\([^)]*\):', code)
+        return match.group(1) if match else None
+
+    except Exception as e:
+        print(f"[WARNING] Scene detection via import failed: {e}")
+        # Fallback to simple regex that captures any class definition
+        match = re.search(r'class\s+(\w+)\s*\([^)]*\):', code)
+        return match.group(1) if match else None
+
+    finally:
+        # Always clean up temporary module
+        if temp_module_name and temp_module_name in sys.modules:
+            try:
+                del sys.modules[temp_module_name]
+            except:
+                pass
 
 class ManimAPI:
     """
@@ -805,7 +1382,7 @@ class MyScene(Scene):
     def open_file_dialog(self):
         """Open file dialog and return file path"""
         result = app_state['window'].create_file_dialog(
-            webview.OPEN_DIALOG,
+            FileDialog.OPEN,
             allow_multiple=False,
             file_types=('Python Files (*.py)',)
         )
@@ -827,7 +1404,7 @@ class MyScene(Scene):
     def save_file_dialog(self, code):
         """Save file dialog"""
         result = app_state['window'].create_file_dialog(
-            dialog_type=webview.SAVE_DIALOG,
+            dialog_type=webview.FileDialog.SAVE,
             save_filename='scene.py',
             file_types=('Python Files (*.py)',)
         )
@@ -995,6 +1572,86 @@ class MyScene(Scene):
             print(f"[AUTOSAVE ERROR] {e}")
             return {'status': 'error', 'message': str(e)}
 
+    def delete_all_autosaves(self):
+        """Delete all autosave files"""
+        try:
+            deleted_count = 0
+            if os.path.exists(AUTOSAVE_DIR):
+                for filename in os.listdir(AUTOSAVE_DIR):
+                    filepath = os.path.join(AUTOSAVE_DIR, filename)
+                    if os.path.isfile(filepath):
+                        os.remove(filepath)
+                        deleted_count += 1
+            print(f"[AUTOSAVE] Deleted {deleted_count} files")
+            return {'status': 'success', 'deleted_count': deleted_count}
+        except Exception as e:
+            print(f"[AUTOSAVE ERROR] {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def open_autosave_folder(self):
+        """Open the autosave folder in file explorer"""
+        try:
+            if not os.path.exists(AUTOSAVE_DIR):
+                os.makedirs(AUTOSAVE_DIR, exist_ok=True)
+
+            if os.name == 'nt':
+                os.startfile(AUTOSAVE_DIR)
+            elif os.name == 'posix':
+                subprocess.run(['xdg-open', AUTOSAVE_DIR])
+
+            return {'status': 'success', 'path': AUTOSAVE_DIR}
+        except Exception as e:
+            print(f"[AUTOSAVE ERROR] {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def clear_manim_cache(self):
+        """Clear Manim's cache directories (partial_movie_files and Tex)"""
+        try:
+            deleted_count = 0
+            deleted_size = 0
+
+            # Clear partial_movie_files from media directory
+            partial_movies_dir = os.path.join(MEDIA_DIR, 'videos')
+            if os.path.exists(partial_movies_dir):
+                for root, dirs, files in os.walk(partial_movies_dir):
+                    if 'partial_movie_files' in root:
+                        for file in files:
+                            filepath = os.path.join(root, file)
+                            try:
+                                file_size = os.path.getsize(filepath)
+                                os.remove(filepath)
+                                deleted_count += 1
+                                deleted_size += file_size
+                            except:
+                                pass
+
+            # Clear Tex cache
+            tex_dir = os.path.join(MEDIA_DIR, 'Tex')
+            if os.path.exists(tex_dir):
+                for root, dirs, files in os.walk(tex_dir):
+                    for file in files:
+                        filepath = os.path.join(root, file)
+                        try:
+                            file_size = os.path.getsize(filepath)
+                            os.remove(filepath)
+                            deleted_count += 1
+                            deleted_size += file_size
+                        except:
+                            pass
+
+            # Convert bytes to MB
+            deleted_size_mb = deleted_size / (1024 * 1024)
+
+            print(f"[CACHE] Cleared {deleted_count} files ({deleted_size_mb:.2f} MB)")
+            return {
+                'status': 'success',
+                'deleted_count': deleted_count,
+                'deleted_size_mb': round(deleted_size_mb, 2)
+            }
+        except Exception as e:
+            print(f"[CACHE ERROR] {e}")
+            return {'status': 'error', 'message': str(e)}
+
     def check_code_errors(self, code):
         """Check Python code for syntax errors using AST"""
         try:
@@ -1040,9 +1697,17 @@ class MyScene(Scene):
             print(f"[CODE CHECK ERROR] {e}")
             return {'status': 'error', 'message': str(e)}
 
-    def render_animation(self, code, quality='720p', fps=30, format='mp4', width=None, height=None):
+    def render_animation(self, code, quality='720p', fps=30, gpu_accelerate=False, format='mp4', width=None, height=None):
         """Render the animation - same as preview but uses RENDER_DIR"""
         global PYTHON_EXE
+
+        print("=" * 80)
+        print(f"[RENDER] render_animation() called with parameters:")
+        print(f"[RENDER]   quality: {quality}")
+        print(f"[RENDER]   fps: {fps}")
+        print(f"[RENDER]   gpu_accelerate: {gpu_accelerate} (type: {type(gpu_accelerate)})")
+        print(f"[RENDER]   format: {format}")
+        print("=" * 80)
 
         # Initialize Python executable if needed
         if PYTHON_EXE is None:
@@ -1050,8 +1715,27 @@ class MyScene(Scene):
             if not PYTHON_EXE:
                 return {'status': 'error', 'message': 'Python environment not available'}
 
+        # Safety check: if is_rendering is stuck from a previous interrupted render
+        # Check if there's actually a render process running
         if app_state['is_rendering']:
-            return {'status': 'error', 'message': 'Already rendering'}
+            # Check if render process exists and is actually running
+            render_process_running = False
+            if app_state.get('render_process'):
+                try:
+                    if hasattr(app_state['render_process'], 'poll'):
+                        render_process_running = (app_state['render_process'].poll() is None)
+                except:
+                    pass
+
+            if not render_process_running:
+                # Process not running but state is stuck - reset it
+                print("[RENDER] Detected stuck render state - resetting")
+                app_state['is_rendering'] = False
+            else:
+                return {'status': 'error', 'message': 'Already rendering'}
+
+        if app_state['is_previewing']:
+            return {'status': 'error', 'message': 'Cannot render while previewing. Please wait for preview to complete.'}
 
         try:
             # Clear render folder before rendering
@@ -1064,10 +1748,46 @@ class MyScene(Scene):
             temp_file = os.path.join(RENDER_DIR, f'temp_render_{timestamp}.py')
 
             # Write file and ensure it's fully closed before proceeding
-            with open(temp_file, 'w', encoding='utf-8') as f:
-                f.write(code)
-                f.flush()  # Flush to OS buffer
-                os.fsync(f.fileno())  # Force write to disk
+            # First, dump raw code for debugging
+            print(f"[DEBUG] First 500 chars of code before sanitization:")
+            print(f"[DEBUG] {repr(code[:500])}")
+
+            # Sanitize code to remove invisible Unicode characters that corrupt LaTeX
+            code = sanitize_code_for_latex(code)
+
+            print(f"[DEBUG] First 500 chars of code AFTER sanitization:")
+            print(f"[DEBUG] {repr(code[:500])}")
+
+            # Add UTF-8 coding declaration if not present
+            # Check first two lines for coding declaration (PEP 263)
+            lines = code.split('\n', 2)
+            has_coding = False
+            for i in range(min(2, len(lines))):
+                if 'coding' in lines[i] or 'encoding' in lines[i]:
+                    has_coding = True
+                    break
+
+            if not has_coding:
+                # Add both shebang-compatible and standard coding declarations
+                code_with_encoding = '#!/usr/bin/env python\n# -*- coding: utf-8 -*-\n' + code
+            else:
+                code_with_encoding = code
+
+            # Write file
+            with open(temp_file, 'w', encoding='utf-8', newline='\n', errors='replace') as f:
+                f.write(code_with_encoding)
+
+            # Also save a debug copy with hex dump
+            debug_file = temp_file + '.debug.txt'
+            with open(debug_file, 'w', encoding='utf-8') as f:
+                f.write("=== ORIGINAL CODE (first 1000 chars) ===\n")
+                f.write(code[:1000])
+                f.write("\n\n=== HEX DUMP (first 500 bytes) ===\n")
+                for i, byte in enumerate(code[:500].encode('utf-8')):
+                    f.write(f"{byte:02X} ")
+                    if (i + 1) % 16 == 0:
+                        f.write("\n")
+            print(f"[DEBUG] Saved debug file to: {debug_file}")
 
             # Ensure file is flushed to disk and fully closed
             time.sleep(0.2)  # Increased delay to ensure file is available
@@ -1107,15 +1827,46 @@ class MyScene(Scene):
             # Add render directory as media directory (output goes here)
             cmd.extend(['--media_dir', RENDER_DIR])
 
-            # Add FPS if not using preset quality flag
-            if quality_flag not in ['-ql', '-qm', '-qh', '-qp', '-qk']:
-                cmd.extend(['--frame_rate', str(fps)])
+            # ALWAYS add FPS to allow user override (manim accepts --frame_rate even with preset flags)
+            # This allows custom FPS with any quality setting
+            cmd.extend(['--frame_rate', str(fps)])
+            print(f"[RENDER] Using FPS: {fps}")
 
             # Add format if specified
             if format and format.lower() != 'mp4':
                 cmd.extend(['--format', format.lower()])
 
-            print(f"Render command: {' '.join(cmd)}")
+            # Check settings for cache preference (default: disable caching)
+            settings_file = os.path.join(USER_DATA_DIR, 'settings.json')
+            disable_cache = True  # Default to disabled
+            try:
+                if os.path.exists(settings_file):
+                    import json
+                    with open(settings_file, 'r') as f:
+                        settings = json.load(f)
+                        disable_cache = settings.get('disableCache', True)
+            except Exception as e:
+                print(f"[RENDER] Could not load cache setting: {e}, using default (disabled)")
+
+            if disable_cache:
+                cmd.extend(['--disable_caching'])
+                print(f"[RENDER] Caching DISABLED per user settings")
+            else:
+                print(f"[RENDER] Caching ENABLED per user settings")
+
+            # Force progress bar display
+            cmd.extend(['--progress_bar', 'display'])
+            print(f"[RENDER] Progress bar ENABLED")
+
+            # Add GPU acceleration (OpenGL renderer) if requested
+            print(f"[GPU CHECK] Checking gpu_accelerate flag: {gpu_accelerate}")
+            if gpu_accelerate:
+                cmd.extend(['--renderer=opengl'])
+                print(f"[GPU] OK GPU acceleration ENABLED - adding --renderer=opengl to command")
+            else:
+                print(f"[GPU] DISABLED GPU acceleration - not adding --renderer=opengl")
+
+            print(f"[RENDER] Full command: {' '.join(cmd)}")
 
             # Send command to terminal PTY instead of running in subprocess
             # Terminal is in ASSETS_DIR, but render temp file is in RENDER_DIR, so we need full paths
@@ -1138,6 +1889,10 @@ class MyScene(Scene):
                         app_state['terminal_process'].write('cls\r\n')
                         time.sleep(0.2)
 
+                    # Clear error buffer for fresh error detection
+                    app_state['terminal_error_buffer'] = []
+                    print("[RENDER] Cleared error buffer for new render")
+
                     # Send command to terminal
                     if WINPTY_AVAILABLE and hasattr(app_state['terminal_process'], 'write'):
                         app_state['terminal_process'].write(cmd_string + '\r\n')
@@ -1154,15 +1909,64 @@ class MyScene(Scene):
                     def watch_render():
                         import time
                         import shutil
-                        max_wait = 300  # 5 minutes for render
+                        max_wait = 7200  # 2 hours for render (for long/complex animations)
                         start_time = time.time()
 
                         print(f"[RENDER WATCHER] Waiting for render to complete...")
                         print(f"[RENDER WATCHER] Temp file to clean up later: {render_temp_file}")
 
+                        # Wait a bit for command to start executing before checking for errors
+                        time.sleep(3)
+                        print(f"[RENDER WATCHER] Starting error detection...")
+
                         # Wait for file to appear in render directory
+                        error_check_count = 0
                         while time.time() - start_time < max_wait:
-                            time.sleep(2)
+                            # Check terminal output for errors periodically (not every iteration)
+                            # Only check every 5 iterations (every 10 seconds) to reduce spam
+                            error_check_count += 1
+                            if error_check_count % 5 == 0:
+                                has_error, error_msg = check_terminal_output_for_errors()
+
+                                # Check if user interrupted with Ctrl+C
+                                output = ''.join(app_state['terminal_error_buffer'])
+                                if 'KeyboardInterrupt' in output or '^C' in output or 'Interrupted' in output:
+                                    print(f"[RENDER WATCHER] Detected Ctrl+C interrupt - stopping render")
+                                    app_state['is_rendering'] = False
+                                    return
+                            else:
+                                has_error = False
+                                error_msg = None
+
+                            # Additional check: if user manually changed the state (via stop button)
+                            if not app_state['is_rendering']:
+                                print(f"[RENDER WATCHER] Render stopped externally - exiting watcher")
+                                return
+
+                            if has_error:
+                                print(f"[RENDER WATCHER] Error detected in terminal output: {error_msg}")
+                                app_state['is_rendering'] = False
+
+                                # Clean up temp file
+                                try:
+                                    if os.path.exists(render_temp_file):
+                                        os.remove(render_temp_file)
+                                        print(f"[RENDER WATCHER] Cleaned up temp file after error")
+                                except Exception as cleanup_err:
+                                    print(f"[RENDER WATCHER] Error cleaning temp file: {cleanup_err}")
+
+                                # Notify frontend of failure
+                                if app_state['window']:
+                                    try:
+                                        safe_error = error_msg.replace('\\', '\\\\').replace('"', '\\"').replace("'", "\\'")
+                                        safe_evaluate_js(
+                                            app_state['window'],
+                                            f'if(window.renderFailed){{window.renderFailed("{safe_error}")}}'
+                                        )
+                                    except Exception as js_err:
+                                        print(f"[RENDER WATCHER] Error notifying frontend: {js_err}")
+
+                                return
 
                             # Look for video files in render directory
                             try:
@@ -1224,7 +2028,8 @@ class MyScene(Scene):
                                                             time.sleep(0.5)
                                                             # Trigger save dialog in frontend with final path
                                                             escaped_path = final_render_path.replace('\\', '\\\\').replace('"', '\\"')
-                                                            app_state['window'].evaluate_js(
+                                                            safe_evaluate_js(
+                                                                app_state['window'],
                                                                 f'if(window.showRenderSaveDialog){{window.showRenderSaveDialog("{escaped_path}")}}'
                                                             )
                                                             print(f"[RENDER WATCHER] Save dialog triggered")
@@ -1237,6 +2042,9 @@ class MyScene(Scene):
 
                             except Exception as e:
                                 print(f"[RENDER WATCHER] Error checking files: {e}")
+
+                            # Sleep before next check
+                            time.sleep(2)
 
                         print(f"[RENDER WATCHER] Timeout - render file not found after {max_wait}s")
                         app_state['is_rendering'] = False
@@ -1256,6 +2064,7 @@ class MyScene(Scene):
                     return {'status': 'started', 'message': 'Render command sent to terminal'}
                 except Exception as e:
                     print(f"[RENDER ERROR] Failed to send to terminal: {e}")
+                    app_state['is_rendering'] = False
                     return {'status': 'error', 'message': f'Failed to send command to terminal: {e}'}
 
             # Fallback to old subprocess method if terminal not available
@@ -1453,6 +2262,7 @@ class MyScene(Scene):
 
         except Exception as e:
             print(f"Error starting render: {e}")
+            app_state['is_rendering'] = False
             return {'status': 'error', 'message': str(e)}
 
     def _get_quality_flag(self, quality):
@@ -1460,12 +2270,26 @@ class MyScene(Scene):
         if quality in QUALITY_PRESETS:
             return QUALITY_PRESETS[quality][0]  # Return the flag (e.g., '-ql', '-qm')
         else:
-            # Custom resolution format: WIDTHxHEIGHT
-            return f'-r{quality}'
+            # Validate custom resolution format: should be WIDTHxHEIGHT
+            if 'x' in str(quality).lower():
+                # Custom resolution like "1920x1080"
+                return f'-r{quality}'
+            else:
+                # Invalid quality - fallback to 720p
+                print(f"[WARNING] Invalid quality '{quality}', using 720p fallback")
+                return QUALITY_PRESETS["720p"][0]
 
-    def quick_preview(self, code, quality='480p', fps=15, format='mp4'):
+    def quick_preview(self, code, quality='480p', fps=15, gpu_accelerate=False, format='mp4'):
         """Quick preview the animation with customizable quality settings"""
         global PYTHON_EXE
+
+        print("=" * 80)
+        print(f"[PREVIEW] quick_preview() called with parameters:")
+        print(f"[PREVIEW]   quality: {quality}")
+        print(f"[PREVIEW]   fps: {fps}")
+        print(f"[PREVIEW]   gpu_accelerate: {gpu_accelerate} (type: {type(gpu_accelerate)})")
+        print(f"[PREVIEW]   format: {format}")
+        print("=" * 80)
 
         # Initialize Python executable if needed
         if PYTHON_EXE is None:
@@ -1473,8 +2297,27 @@ class MyScene(Scene):
             if not PYTHON_EXE:
                 return {'status': 'error', 'message': 'Python environment not available'}
 
+        # Safety check: if is_previewing is stuck from a previous interrupted preview
+        # Check if there's actually a preview process running
         if app_state['is_previewing']:
-            return {'status': 'error', 'message': 'Already previewing'}
+            # Check if preview process exists and is actually running
+            preview_process_running = False
+            if app_state.get('preview_process'):
+                try:
+                    if hasattr(app_state['preview_process'], 'poll'):
+                        preview_process_running = (app_state['preview_process'].poll() is None)
+                except:
+                    pass
+
+            if not preview_process_running:
+                # Process not running but state is stuck - reset it
+                print("[PREVIEW] Detected stuck preview state - resetting")
+                app_state['is_previewing'] = False
+            else:
+                return {'status': 'error', 'message': 'Already previewing'}
+
+        if app_state['is_rendering']:
+            return {'status': 'error', 'message': 'Cannot preview while rendering. Please wait for render to complete.'}
 
         try:
             # Clear preview folder before rendering
@@ -1487,10 +2330,46 @@ class MyScene(Scene):
             temp_file = os.path.join(PREVIEW_DIR, f'temp_preview_{timestamp}.py')
 
             # Write file and ensure it's fully closed before proceeding
-            with open(temp_file, 'w', encoding='utf-8') as f:
-                f.write(code)
-                f.flush()  # Flush to OS buffer
-                os.fsync(f.fileno())  # Force write to disk
+            # First, dump raw code for debugging
+            print(f"[DEBUG] First 500 chars of code before sanitization:")
+            print(f"[DEBUG] {repr(code[:500])}")
+
+            # Sanitize code to remove invisible Unicode characters that corrupt LaTeX
+            code = sanitize_code_for_latex(code)
+
+            print(f"[DEBUG] First 500 chars of code AFTER sanitization:")
+            print(f"[DEBUG] {repr(code[:500])}")
+
+            # Add UTF-8 coding declaration if not present
+            # Check first two lines for coding declaration (PEP 263)
+            lines = code.split('\n', 2)
+            has_coding = False
+            for i in range(min(2, len(lines))):
+                if 'coding' in lines[i] or 'encoding' in lines[i]:
+                    has_coding = True
+                    break
+
+            if not has_coding:
+                # Add both shebang-compatible and standard coding declarations
+                code_with_encoding = '#!/usr/bin/env python\n# -*- coding: utf-8 -*-\n' + code
+            else:
+                code_with_encoding = code
+
+            # Write file
+            with open(temp_file, 'w', encoding='utf-8', newline='\n', errors='replace') as f:
+                f.write(code_with_encoding)
+
+            # Also save a debug copy with hex dump
+            debug_file = temp_file + '.debug.txt'
+            with open(debug_file, 'w', encoding='utf-8') as f:
+                f.write("=== ORIGINAL CODE (first 1000 chars) ===\n")
+                f.write(code[:1000])
+                f.write("\n\n=== HEX DUMP (first 500 bytes) ===\n")
+                for i, byte in enumerate(code[:500].encode('utf-8')):
+                    f.write(f"{byte:02X} ")
+                    if (i + 1) % 16 == 0:
+                        f.write("\n")
+            print(f"[DEBUG] Saved debug file to: {debug_file}")
 
             # Ensure file is flushed to disk and fully closed
             time.sleep(0.2)  # Increased delay to ensure file is available
@@ -1530,15 +2409,46 @@ class MyScene(Scene):
             # Add preview directory as media directory (output goes here)
             cmd.extend(['--media_dir', PREVIEW_DIR])
 
-            # Add FPS if not using preset quality flag
-            if quality_flag not in ['-ql', '-qm', '-qh', '-qp', '-qk']:
-                cmd.extend(['--frame_rate', str(fps)])
+            # ALWAYS add FPS to allow user override (manim accepts --frame_rate even with preset flags)
+            # This allows custom FPS with any quality setting
+            cmd.extend(['--frame_rate', str(fps)])
+            print(f"[PREVIEW] Using FPS: {fps}")
 
             # Add format if specified
             if format and format.lower() != 'mp4':
                 cmd.extend(['--format', format.lower()])
 
-            print(f"Preview command: {' '.join(cmd)}")
+            # Check settings for cache preference (default: disable caching)
+            settings_file = os.path.join(USER_DATA_DIR, 'settings.json')
+            disable_cache = True  # Default to disabled
+            try:
+                if os.path.exists(settings_file):
+                    import json
+                    with open(settings_file, 'r') as f:
+                        settings = json.load(f)
+                        disable_cache = settings.get('disableCache', True)
+            except Exception as e:
+                print(f"[PREVIEW] Could not load cache setting: {e}, using default (disabled)")
+
+            if disable_cache:
+                cmd.extend(['--disable_caching'])
+                print(f"[PREVIEW] Caching DISABLED per user settings")
+            else:
+                print(f"[PREVIEW] Caching ENABLED per user settings")
+
+            # Force progress bar display
+            cmd.extend(['--progress_bar', 'display'])
+            print(f"[PREVIEW] Progress bar ENABLED")
+
+            # Add GPU acceleration (OpenGL renderer) if requested
+            print(f"[GPU CHECK] Checking gpu_accelerate flag: {gpu_accelerate}")
+            if gpu_accelerate:
+                cmd.extend(['--renderer=opengl'])
+                print(f"[GPU] OK GPU acceleration ENABLED - adding --renderer=opengl to command")
+            else:
+                print(f"[GPU] DISABLED GPU acceleration - not adding --renderer=opengl")
+
+            print(f"[PREVIEW] Full command: {' '.join(cmd)}")
 
             # Send command to terminal PTY instead of running in subprocess
             # Terminal is in ASSETS_DIR, but preview temp file is in PREVIEW_DIR, so we need full paths
@@ -1561,6 +2471,10 @@ class MyScene(Scene):
                         app_state['terminal_process'].write('cls\r\n')
                         time.sleep(0.2)
 
+                    # Clear error buffer for fresh error detection
+                    app_state['terminal_error_buffer'] = []
+                    print("[PREVIEW] Cleared error buffer for new preview")
+
                     # Send command to terminal
                     if WINPTY_AVAILABLE and hasattr(app_state['terminal_process'], 'write'):
                         app_state['terminal_process'].write(cmd_string + '\r\n')
@@ -1577,15 +2491,76 @@ class MyScene(Scene):
                     def watch_preview():
                         import time
                         import shutil
-                        max_wait = 180  # 3 minutes for preview
+                        max_wait = 7200  # 2 hours for preview (effectively no limit for long renders)
                         start_time = time.time()
 
                         print(f"[PREVIEW WATCHER] Waiting for preview to complete...")
                         print(f"[PREVIEW WATCHER] Temp file to clean up later: {preview_temp_file}")
 
+                        # Wait a bit for command to start executing before checking for errors
+                        time.sleep(3)
+                        print(f"[PREVIEW WATCHER] Starting error detection...")
+
                         # Wait for file to appear in preview directory
+                        error_check_count = 0
+                        manim_reported_done = False
                         while time.time() - start_time < max_wait:
-                            time.sleep(2)
+                            # Check terminal output for errors periodically (not every iteration)
+                            # Only check every 5 iterations (every 10 seconds) to reduce spam
+                            error_check_count += 1
+                            if error_check_count % 5 == 0:
+                                has_error, error_msg = check_terminal_output_for_errors()
+
+                                # Also check if manim reported successful completion
+                                output = ''.join(app_state['terminal_error_buffer'])
+                                if 'Rendered ' in output and 'File ready at' in output:
+                                    if not manim_reported_done:
+                                        print(f"[PREVIEW WATCHER] Manim reported completion in terminal output")
+                                        manim_reported_done = True
+
+                                # Check if user interrupted with Ctrl+C
+                                if 'KeyboardInterrupt' in output or '^C' in output or 'Interrupted' in output:
+                                    print(f"[PREVIEW WATCHER] Detected Ctrl+C interrupt - stopping preview")
+                                    app_state['is_previewing'] = False
+                                    return
+                            else:
+                                has_error = False
+                                error_msg = None
+
+                            # Additional check: if user manually changed the state (via stop button)
+                            if not app_state['is_previewing']:
+                                print(f"[PREVIEW WATCHER] Preview stopped externally - exiting watcher")
+                                return
+
+                            if has_error:
+                                print(f"[PREVIEW WATCHER] Error detected in terminal output: {error_msg}")
+                                app_state['is_previewing'] = False
+
+                                # Clean up temp file
+                                try:
+                                    if os.path.exists(preview_temp_file):
+                                        os.remove(preview_temp_file)
+                                        print(f"[PREVIEW WATCHER] Cleaned up temp file after error")
+                                except Exception as cleanup_err:
+                                    print(f"[PREVIEW WATCHER] Error cleaning temp file: {cleanup_err}")
+
+                                # Notify frontend of failure
+                                if app_state['window']:
+                                    try:
+                                        safe_error = error_msg.replace('\\', '\\\\').replace('"', '\\"').replace("'", "\\'")
+                                        safe_evaluate_js(
+                                            app_state['window'],
+                                            f'if(window.previewFailed){{window.previewFailed("{safe_error}")}}'
+                                        )
+                                    except Exception as js_err:
+                                        print(f"[PREVIEW WATCHER] Error notifying frontend: {js_err}")
+
+                                return
+
+                            # Print progress every 30 seconds
+                            elapsed = time.time() - start_time
+                            if error_check_count % 15 == 0:  # Every 30 seconds (15 * 2 second sleep)
+                                print(f"[PREVIEW WATCHER] Still waiting for preview... ({int(elapsed)}s elapsed)")
 
                             # Look for video files in preview directory
                             try:
@@ -1598,7 +2573,7 @@ class MyScene(Scene):
                                                 preview_file = os.path.join(root, file)
                                                 print(f"[PREVIEW WATCHER] Found preview file: {preview_file}")
 
-                                                # Copy preview file to assets and track for cleanup on exit
+                                                # Process video with ffmpeg and copy to assets
                                                 try:
                                                     os.makedirs(ASSETS_DIR, exist_ok=True)
                                                     assets_path = os.path.join(ASSETS_DIR, file)
@@ -1607,9 +2582,74 @@ class MyScene(Scene):
                                                     if os.path.exists(assets_path):
                                                         os.remove(assets_path)
 
-                                                    print(f"[PREVIEW WATCHER] Copying to assets: {assets_path}")
-                                                    shutil.copy2(preview_file, assets_path)
-                                                    print(f"[PREVIEW WATCHER] Preview file copied to assets!")
+                                                    # Wait for file to be completely written
+                                                    print(f"[PREVIEW WATCHER] Waiting for file to be fully written...")
+                                                    time.sleep(1)  # Wait for filesystem flush
+
+                                                    # Verify source file is valid and stable
+                                                    prev_size = -1
+                                                    stable_count = 0
+                                                    for _ in range(10):  # Wait up to 5 seconds
+                                                        try:
+                                                            curr_size = os.path.getsize(preview_file)
+                                                            if curr_size == prev_size and curr_size > 0:
+                                                                stable_count += 1
+                                                                if stable_count >= 2:  # Stable for 1 second
+                                                                    break
+                                                            else:
+                                                                stable_count = 0
+                                                            prev_size = curr_size
+                                                            time.sleep(0.5)
+                                                        except:
+                                                            time.sleep(0.5)
+
+                                                    print(f"[PREVIEW WATCHER] Source file stable at {prev_size} bytes")
+
+                                                    # Use ffmpeg to process and copy (avoids corruption from shutil.copy2)
+                                                    # This also enables fast-start in one step
+                                                    if preview_file.endswith('.mp4'):
+                                                        try:
+                                                            print(f"[PREVIEW WATCHER] Processing MP4 with ffmpeg (fast-start + copy to assets)...")
+
+                                                            # Use ffmpeg to move moov atom to beginning and copy to assets
+                                                            ffmpeg_cmd = [
+                                                                'ffmpeg',
+                                                                '-y',  # Overwrite output
+                                                                '-i', preview_file,  # Input from ORIGINAL preview file
+                                                                '-c', 'copy',  # Copy streams without re-encoding
+                                                                '-movflags', '+faststart',  # Move moov atom to beginning
+                                                                assets_path  # Output directly to assets
+                                                            ]
+
+                                                            result = subprocess.run(
+                                                                ffmpeg_cmd,
+                                                                stdout=subprocess.PIPE,
+                                                                stderr=subprocess.PIPE,
+                                                                text=True,
+                                                                timeout=60,
+                                                                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
+                                                            )
+
+                                                            if result.returncode == 0 and os.path.exists(assets_path):
+                                                                final_size = os.path.getsize(assets_path)
+                                                                print(f"[PREVIEW WATCHER] ✅ Video processed successfully: {final_size} bytes")
+                                                                print(f"[PREVIEW WATCHER] ✅ Fast-start enabled for web playback")
+                                                            else:
+                                                                print(f"[PREVIEW WATCHER] ⚠️ ffmpeg processing failed: {result.stderr}")
+                                                                # Fallback: try direct copy
+                                                                print(f"[PREVIEW WATCHER] Falling back to direct copy...")
+                                                                shutil.copy2(preview_file, assets_path)
+                                                                print(f"[PREVIEW WATCHER] File copied (without fast-start)")
+                                                        except FileNotFoundError:
+                                                            print(f"[PREVIEW WATCHER] ⚠️ ffmpeg not found, using direct copy")
+                                                            shutil.copy2(preview_file, assets_path)
+                                                        except Exception as ff_err:
+                                                            print(f"[PREVIEW WATCHER] ⚠️ ffmpeg error: {ff_err}, using direct copy")
+                                                            shutil.copy2(preview_file, assets_path)
+                                                    else:
+                                                        # Non-MP4 files: direct copy
+                                                        print(f"[PREVIEW WATCHER] Copying non-MP4 file to assets...")
+                                                        shutil.copy2(preview_file, assets_path)
 
                                                     # Add to cleanup set - will be deleted when app closes
                                                     app_state['preview_files_to_cleanup'].add(assets_path)
@@ -1620,7 +2660,8 @@ class MyScene(Scene):
                                                         try:
                                                             # Escape the path for JavaScript
                                                             escaped_path = assets_path.replace('\\', '\\\\').replace('"', '\\"')
-                                                            app_state['window'].evaluate_js(
+                                                            safe_evaluate_js(
+                                                                app_state['window'],
                                                                 f'if(window.previewCompleted){{window.previewCompleted("{escaped_path}")}}'
                                                             )
                                                             print(f"[PREVIEW WATCHER] Notified frontend to load preview")
@@ -1644,6 +2685,37 @@ class MyScene(Scene):
                             except Exception as e:
                                 print(f"[PREVIEW WATCHER] Error checking files: {e}")
 
+                            # Check if preview process has finished (if using subprocess mode)
+                            # In terminal mode, we rely on file detection instead
+                            if app_state.get('preview_process') and hasattr(app_state['preview_process'], 'poll'):
+                                if app_state['preview_process'].poll() is not None:
+                                    # Process finished
+                                    elapsed = time.time() - start_time
+                                    print(f"[PREVIEW WATCHER] Preview process finished after {int(elapsed)}s, checking for output one more time...")
+                                    # Give it one more chance to find files
+                                    time.sleep(2)
+                                    # Continue loop to check files one more time
+
+                            # Sleep before next check
+                            time.sleep(2)
+
+                            # Safety: if manim reported done but we still haven't found the file after 30 seconds
+                            if manim_reported_done and (time.time() - start_time) > 30:
+                                print(f"[PREVIEW WATCHER] Manim reported completion but file not found. Checking manually...")
+                                # Try one more thorough search
+                                try:
+                                    for root, dirs, files in os.walk(PREVIEW_DIR):
+                                        print(f"[PREVIEW WATCHER] Checking directory: {root}")
+                                        for file in files:
+                                            if file.endswith('.mp4'):
+                                                print(f"[PREVIEW WATCHER] Found MP4: {os.path.join(root, file)}")
+                                except Exception as search_err:
+                                    print(f"[PREVIEW WATCHER] Manual search error: {search_err}")
+
+                                print(f"[PREVIEW WATCHER] Giving up - file not found despite completion report")
+                                app_state['is_previewing'] = False
+                                break
+
                         print(f"[PREVIEW WATCHER] Timeout - preview file not found after {max_wait}s")
                         app_state['is_previewing'] = False
 
@@ -1662,6 +2734,7 @@ class MyScene(Scene):
                     return {'status': 'started', 'message': 'Preview command sent to terminal'}
                 except Exception as e:
                     print(f"[PREVIEW ERROR] Failed to send to terminal: {e}")
+                    app_state['is_previewing'] = False
                     return {'status': 'error', 'message': f'Failed to send command to terminal: {e}'}
 
             # Fallback to old subprocess method if terminal not available
@@ -1727,8 +2800,28 @@ class MyScene(Scene):
                                 print(f"[OK] Verified file exists and is accessible: {final_path}")
                                 print(f"[OK] Preview file ready in preview folder: {final_path}")
 
+                                # Copy preview file to assets and track for cleanup on exit
+                                import shutil
+                                os.makedirs(ASSETS_DIR, exist_ok=True)
+                                assets_path = os.path.join(ASSETS_DIR, os.path.basename(final_path))
+
+                                # If file already exists, remove it first
+                                if os.path.exists(assets_path):
+                                    os.remove(assets_path)
+
+                                print(f"[PREVIEW] Copying to assets: {assets_path}")
+                                shutil.copy2(final_path, assets_path)
+                                print(f"[PREVIEW] Preview file copied to assets!")
+
+                                # Add to cleanup set - will be deleted when app closes
+                                app_state['preview_files_to_cleanup'].add(assets_path)
+                                print(f"[PREVIEW] Added to cleanup set (total: {len(app_state['preview_files_to_cleanup'])} files)")
+
+                                # Use assets path for frontend notification
+                                final_path = assets_path
+
                             except Exception as verify_error:
-                                print(f"[ERROR] Failed to verify preview file: {verify_error}")
+                                print(f"[ERROR] Failed to verify/copy preview file: {verify_error}")
                                 final_path = None
                         else:
                             print(f"[WARNING] No output file found after preview")
@@ -1771,18 +2864,59 @@ class MyScene(Scene):
 
         except Exception as e:
             print(f"Error starting preview: {e}")
+            app_state['is_previewing'] = False
             return {'status': 'error', 'message': str(e)}
 
     def stop_render(self):
-        """Stop current render"""
-        if app_state['render_process']:
-            try:
-                app_state['render_process'].terminate()
-                app_state['is_rendering'] = False
-                return {'status': 'success'}
-            except Exception as e:
-                return {'status': 'error', 'message': str(e)}
-        return {'status': 'error', 'message': 'No render process running'}
+        """Stop current render or preview"""
+        try:
+            # Stop render process if it exists
+            if app_state['render_process']:
+                try:
+                    app_state['render_process'].terminate()
+                    app_state['is_rendering'] = False
+                    print("[STOP] Render process terminated")
+                except Exception as e:
+                    print(f"[STOP] Error terminating render: {e}")
+
+            # Stop preview process if it exists
+            if app_state['preview_process']:
+                try:
+                    app_state['preview_process'].terminate()
+                    app_state['is_previewing'] = False
+                    print("[STOP] Preview process terminated")
+                except Exception as e:
+                    print(f"[STOP] Error terminating preview: {e}")
+
+            # If using terminal mode, send Ctrl+C
+            if app_state['terminal_process']:
+                try:
+                    if WINPTY_AVAILABLE and hasattr(app_state['terminal_process'], 'write'):
+                        # Send Ctrl+C to terminal
+                        app_state['terminal_process'].write('\x03')
+                        print("[STOP] Sent Ctrl+C to terminal")
+                    else:
+                        # For subprocess mode, send Ctrl+C
+                        import signal
+                        if hasattr(app_state['terminal_process'], 'send_signal'):
+                            app_state['terminal_process'].send_signal(signal.SIGINT)
+                            print("[STOP] Sent SIGINT to terminal")
+                except Exception as e:
+                    print(f"[STOP] Error sending interrupt to terminal: {e}")
+
+            # Always reset states
+            app_state['is_rendering'] = False
+            app_state['is_previewing'] = False
+            print("[STOP] Reset render and preview states")
+
+            return {'status': 'success', 'message': 'Stopped active processes'}
+
+        except Exception as e:
+            print(f"[STOP] Error in stop_render: {e}")
+            # Always reset states even on error
+            app_state['is_rendering'] = False
+            app_state['is_previewing'] = False
+            return {'status': 'error', 'message': str(e)}
 
     def cleanup_after_render(self, scene_name, temp_filename=None, media_dir=None):
         """Find rendered files and return path - DO NOT auto-save, let user choose location"""
@@ -2018,7 +3152,7 @@ class MyScene(Scene):
 
             # Show save dialog
             result = app_state['window'].create_file_dialog(
-                dialog_type=webview.SAVE_DIALOG,
+                dialog_type=webview.FileDialog.SAVE,
                 save_filename=suggested_name,
                 file_types=('Video Files (*.mp4;*.mov;*.webm)', 'All Files (*.*)')
             )
@@ -2299,11 +3433,13 @@ class MyScene(Scene):
                 print("[TERMINAL] Using pywinpty PTY for real terminal emulation")
 
                 # Spawn cmd.exe with PTY
-                terminal_process = winpty.PTY(80, 24)  # 80 columns, 24 rows
+                # Use wider terminal to properly display progress bars
+                terminal_process = winpty.PTY(120, 30)  # 120 columns, 30 rows for better tqdm display
                 terminal_process.spawn('cmd.exe')
 
                 app_state['terminal_process'] = terminal_process
                 app_state['terminal_output_buffer'] = []
+                app_state['terminal_error_buffer'] = []
 
                 # Start background thread to read terminal output
                 def read_terminal_output():
@@ -2315,8 +3451,16 @@ class MyScene(Scene):
                             data = terminal_process.read()
                             if data:
                                 app_state['terminal_output_buffer'].append(data)
-                                # Uncomment to debug what's being received
-                                # print(f"[TERMINAL PTY] Received {len(data)} bytes: {repr(data[-100:])}")
+                                app_state['terminal_error_buffer'].append(data)
+
+                                # Keep error buffer to last 1000 items to prevent memory bloat
+                                if len(app_state['terminal_error_buffer']) > 1000:
+                                    app_state['terminal_error_buffer'] = app_state['terminal_error_buffer'][-1000:]
+
+                                # Debug: Print when we receive progress bar updates (contains \r or ANSI codes)
+                                if '\r' in data or '\x1b[' in data:
+                                    # This is likely a progress bar update
+                                    pass  # Silent - just capturing it
                         except Exception as e:
                             error_msg = str(e).lower()
                             # Ignore common non-error conditions
@@ -2360,6 +3504,7 @@ class MyScene(Scene):
                 time.sleep(0.2)
 
                 # Clear the output buffer so initialization isn't shown to user
+                # Keep error buffer for now - it will be cleared when a render/preview starts
                 app_state['terminal_output_buffer'] = []
 
                 print("[TERMINAL PTY] Environment setup complete")
@@ -2384,6 +3529,7 @@ class MyScene(Scene):
 
                 app_state['terminal_process'] = terminal_process
                 app_state['terminal_output_buffer'] = []
+                app_state['terminal_error_buffer'] = []
 
                 def read_terminal_output():
                     while terminal_process.poll() is None:
@@ -2391,6 +3537,12 @@ class MyScene(Scene):
                             line = terminal_process.stdout.readline()
                             if line:
                                 app_state['terminal_output_buffer'].append(line)
+                                app_state['terminal_error_buffer'].append(line)
+
+                                # Keep error buffer to last 1000 items to prevent memory bloat
+                                if len(app_state['terminal_error_buffer']) > 1000:
+                                    app_state['terminal_error_buffer'] = app_state['terminal_error_buffer'][-1000:]
+
                                 print(f"[TERMINAL] {line.rstrip()}")
                         except Exception as e:
                             print(f"[TERMINAL ERROR] {e}")
@@ -2404,6 +3556,7 @@ class MyScene(Scene):
                 time.sleep(0.5)
 
                 # Initialize environment
+                # Keep error buffer for now - it will be cleared when a render/preview starts
                 app_state['terminal_output_buffer'] = []
                 terminal_process.stdin.write(f'cd /d "{ASSETS_DIR}"\n')
                 terminal_process.stdin.flush()
@@ -2420,6 +3573,7 @@ class MyScene(Scene):
                     time.sleep(0.3)
 
                 time.sleep(0.5)
+                # Keep error buffer for now - it will be cleared when a render/preview starts
                 app_state['terminal_output_buffer'] = []
                 return {'status': 'success', 'message': 'Fallback terminal started'}
 
@@ -2700,13 +3854,68 @@ class MyScene(Scene):
         except Exception as e:
             return {'status': 'error', 'message': str(e)}
 
+    def get_asset_as_bytes(self, file_path):
+        """Return file as base64-encoded bytes for frontend to convert to Blob"""
+        try:
+            import base64
+            import mimetypes
+
+            print(f"[ASSET] get_asset_as_bytes called with: {file_path}")
+
+            if not os.path.exists(file_path):
+                print(f"[ASSET ERROR] File not found: {file_path}")
+                return {'status': 'error', 'message': 'File not found', 'data': None}
+
+            # Read file as binary
+            with open(file_path, 'rb') as f:
+                file_data = f.read()
+
+            # Encode to base64 for transfer
+            base64_data = base64.b64encode(file_data).decode('utf-8')
+
+            # Determine MIME type
+            mime_type, _ = mimetypes.guess_type(file_path)
+            if not mime_type:
+                ext = os.path.splitext(file_path)[1].lower()
+                mime_types_map = {
+                    '.mp4': 'video/mp4',
+                    '.mov': 'video/quicktime',
+                    '.webm': 'video/webm',
+                    '.png': 'image/png',
+                    '.jpg': 'image/jpeg',
+                    '.jpeg': 'image/jpeg',
+                    '.gif': 'image/gif'
+                }
+                mime_type = mime_types_map.get(ext, 'application/octet-stream')
+
+            print(f"[ASSET] File size: {len(file_data)} bytes")
+            print(f"[ASSET] Base64 length: {len(base64_data)} chars")
+            print(f"[ASSET] MIME type: {mime_type}")
+
+            return {
+                'status': 'success',
+                'data': base64_data,  # Base64 encoded binary data
+                'mimeType': mime_type,
+                'size': len(file_data)
+            }
+
+        except Exception as e:
+            print(f"[ASSET ERROR] Failed to read file: {e}")
+            import traceback
+            traceback.print_exc()
+            return {'status': 'error', 'message': str(e), 'data': None}
+
     def get_asset_as_data_url(self, file_path):
-        """OPTIMIZED: Copy file to web/temp for faster HTTP serving (PyWebView blocks file:// URLs)"""
+        """DEPRECATED: Use get_asset_as_bytes instead. Keeping for backwards compatibility."""
         try:
             import shutil
             import mimetypes
+            import urllib.parse
+
+            print(f"[ASSET] get_asset_as_data_url called with: {file_path}")
 
             if not os.path.exists(file_path):
+                print(f"[ASSET ERROR] File not found: {file_path}")
                 return {'status': 'error', 'message': 'File not found', 'dataUrl': None}
 
             # Create temp directory in web folder for HTTP serving
@@ -2717,56 +3926,59 @@ class MyScene(Scene):
             filename = os.path.basename(file_path)
             temp_file = os.path.join(web_temp_dir, filename)
 
-            # Copy file to web/temp_assets (fast for local files)
-            if not os.path.exists(temp_file) or os.path.getmtime(file_path) > os.path.getmtime(temp_file):
-                shutil.copy2(file_path, temp_file)
+            print(f"[ASSET] Copying to: {temp_file}")
 
-            # Return HTTP URL instead of data URL (much faster!)
-            http_url = f'temp_assets/{filename}'
+            # Copy file to web/temp_assets (fast for local files)
+            # Always copy to ensure we have the latest version
+            try:
+                if os.path.exists(temp_file):
+                    os.remove(temp_file)
+                shutil.copy2(file_path, temp_file)
+                print(f"[ASSET] File copied successfully, size: {os.path.getsize(temp_file)} bytes")
+            except Exception as copy_err:
+                print(f"[ASSET ERROR] Failed to copy file: {copy_err}")
+                return {'status': 'error', 'message': f'Failed to copy file: {copy_err}', 'dataUrl': None}
+
+            # Verify the copied file exists and is readable
+            if not os.path.exists(temp_file):
+                print(f"[ASSET ERROR] Copy verification failed - file doesn't exist: {temp_file}")
+                return {'status': 'error', 'message': 'Copy verification failed', 'dataUrl': None}
+
+            # List all files in temp_assets directory for debugging
+            try:
+                temp_assets_files = os.listdir(web_temp_dir)
+                print(f"[ASSET] Files in temp_assets directory: {temp_assets_files}")
+            except Exception as list_err:
+                print(f"[ASSET] Could not list temp_assets directory: {list_err}")
+
+            # PyWebView can access files in the web directory via relative paths
+            # Return the relative path from the HTML file location
+            # HTML file is in: BASE_DIR/web/index.html
+            # Temp file is in: BASE_DIR/web/temp_assets/filename.mp4
+            # So relative path is: temp_assets/filename.mp4
+
+            relative_path = f'temp_assets/{filename}'
+            print(f"[ASSET] Returning relative path: {relative_path}")
+            print(f"[ASSET] File size: {os.path.getsize(temp_file)} bytes")
 
             # Determine MIME type
             mime_type, _ = mimetypes.guess_type(file_path)
             if not mime_type:
                 ext = os.path.splitext(file_path)[1].lower()
-                mime_types = {
-                    # Videos
+                mime_types_map = {
                     '.mp4': 'video/mp4',
                     '.mov': 'video/quicktime',
                     '.webm': 'video/webm',
-                    '.avi': 'video/x-msvideo',
-                    '.mkv': 'video/x-matroska',
-                    '.flv': 'video/x-flv',
-                    '.m4v': 'video/x-m4v',
-                    # Images
-                    '.gif': 'image/gif',
                     '.png': 'image/png',
                     '.jpg': 'image/jpeg',
                     '.jpeg': 'image/jpeg',
-                    '.webp': 'image/webp',
-                    '.svg': 'image/svg+xml',
-                    '.bmp': 'image/bmp',
-                    '.ico': 'image/x-icon',
-                    # Audio
-                    '.mp3': 'audio/mpeg',
-                    '.wav': 'audio/wav',
-                    '.ogg': 'audio/ogg',
-                    '.m4a': 'audio/mp4',
-                    '.aac': 'audio/aac',
-                    '.flac': 'audio/flac',
-                    '.wma': 'audio/x-ms-wma',
-                    # Fonts
-                    '.ttf': 'font/ttf',
-                    '.otf': 'font/otf',
-                    '.woff': 'font/woff',
-                    '.woff2': 'font/woff2',
-                    '.ttc': 'font/collection',
-                    '.eot': 'application/vnd.ms-fontobject'
+                    '.gif': 'image/gif'
                 }
-                mime_type = mime_types.get(ext, 'application/octet-stream')
+                mime_type = mime_types_map.get(ext, 'application/octet-stream')
 
             return {
                 'status': 'success',
-                'dataUrl': http_url,  # Actually HTTP URL, not data URL (but keeping name for compatibility)
+                'dataUrl': relative_path,  # Relative path for PyWebView
                 'mimeType': mime_type,
                 'size': os.path.getsize(file_path)
             }
@@ -2780,7 +3992,7 @@ class MyScene(Scene):
         try:
             if app_state['window']:
                 result = app_state['window'].create_file_dialog(
-                    dialog_type=webview.SAVE_DIALOG,
+                    dialog_type=webview.FileDialog.SAVE,
                     save_filename=default_filename,
                     file_types=('Video Files (*.mp4;*.mov;*.gif;*.png)', 'All Files (*.*)')
                 )
@@ -2920,22 +4132,23 @@ class MyScene(Scene):
             else:
                 raise Exception(f"Video source is not an HTTP URL: {video_src}")
 
-            # Get screen dimensions
-            try:
-                import tkinter as tk
-                root = tk.Tk()
-                screen_width = root.winfo_screenwidth()
-                screen_height = root.winfo_screenheight()
-                root.destroy()
-            except:
-                screen_width = 1920
-                screen_height = 1080
+            # Get main window dimensions if available, otherwise use defaults
+            main_window = app_state.get('window')
+            if main_window and hasattr(main_window, 'width') and hasattr(main_window, 'height'):
+                # Use actual main window dimensions
+                window_width = main_window.width
+                window_height = main_window.height
+                print(f"[INFO] Using main window size: {window_width}x{window_height}")
+            else:
+                # Use default main window size (same as initial create_window)
+                window_width = 1600
+                window_height = 1000
+                print(f"[INFO] Using default window size: {window_width}x{window_height}")
 
-            # Window size and position
-            window_width = int(screen_width * 0.7)
-            window_height = int(screen_height * 0.7)
-            window_x = int(screen_width * 0.15)
-            window_y = int(screen_height * 0.1)
+            # Position: Offset slightly from main window so both are visible
+            # Offset by 50px right and 50px down from original position
+            window_x = 50
+            window_y = 50
 
             print(f"[INFO] Creating new PyWebView window...")
             print(f"[INFO] Window: {window_width}x{window_height} at ({window_x},{window_y})")
@@ -3444,7 +4657,7 @@ class MyScene(Scene):
         try:
             if app_state['window']:
                 result = app_state['window'].create_file_dialog(
-                    webview.OPEN_DIALOG,
+                    FileDialog.OPEN,
                     allow_multiple=True,
                     file_types=(
                         'All Assets (*.mp4;*.mov;*.avi;*.webm;*.mkv;*.png;*.jpg;*.jpeg;*.gif;*.svg;*.bmp;*.webp;*.ttf;*.otf;*.woff;*.woff2;*.ttc;*.mp3;*.wav;*.ogg;*.m4a;*.aac;*.flac;*.srt;*.vtt;*.ass;*.txt;*.md;*.json)',
@@ -3471,6 +4684,129 @@ class MyScene(Scene):
 
         except Exception as e:
             print(f"[UPLOAD] Error selecting files: {e}")
+            return {'status': 'error', 'message': str(e)}
+
+    def upload_assets(self, file_paths):
+        """Copy selected files to the assets directory"""
+        try:
+            import shutil
+
+            if not file_paths:
+                return {'status': 'error', 'message': 'No files provided'}
+
+            # Ensure assets directory exists
+            os.makedirs(ASSETS_DIR, exist_ok=True)
+
+            uploaded_files = []
+            failed_files = []
+
+            for file_path in file_paths:
+                try:
+                    if not os.path.exists(file_path):
+                        failed_files.append({'file': os.path.basename(file_path), 'error': 'File not found'})
+                        continue
+
+                    # Get filename and destination
+                    filename = os.path.basename(file_path)
+                    dest_path = os.path.join(ASSETS_DIR, filename)
+
+                    # Check if file already exists
+                    if os.path.exists(dest_path):
+                        # Add timestamp to filename to avoid overwrite
+                        name, ext = os.path.splitext(filename)
+                        filename = f"{name}_{int(time.time())}{ext}"
+                        dest_path = os.path.join(ASSETS_DIR, filename)
+
+                    # Copy file to assets
+                    shutil.copy2(file_path, dest_path)
+
+                    # Force filesystem sync to ensure file is written
+                    try:
+                        with open(dest_path, 'rb') as f:
+                            os.fsync(f.fileno())
+                    except:
+                        pass  # If fsync fails, continue anyway
+
+                    uploaded_files.append(filename)
+                    print(f'[UPLOAD] Copied {filename} to assets')
+
+                except Exception as e:
+                    failed_files.append({'file': os.path.basename(file_path), 'error': str(e)})
+                    print(f'[UPLOAD ERROR] Failed to copy {file_path}: {e}')
+
+            # Return result
+            if uploaded_files and not failed_files:
+                return {
+                    'status': 'success',
+                    'message': f'Successfully uploaded {len(uploaded_files)} file(s)',
+                    'uploaded': uploaded_files
+                }
+            elif uploaded_files and failed_files:
+                return {
+                    'status': 'partial',
+                    'message': f'Uploaded {len(uploaded_files)} file(s), {len(failed_files)} failed',
+                    'uploaded': uploaded_files,
+                    'failed': failed_files
+                }
+            else:
+                return {
+                    'status': 'error',
+                    'message': 'All uploads failed',
+                    'failed': failed_files
+                }
+
+        except Exception as e:
+            print(f"[UPLOAD ERROR] {e}")
+            traceback.print_exc()
+            return {'status': 'error', 'message': str(e)}
+
+    def upload_file_content(self, filename, base64_content):
+        """Upload a file from base64 content (for drag and drop)"""
+        try:
+            import base64
+
+            if not filename or not base64_content:
+                return {'status': 'error', 'message': 'Missing filename or content'}
+
+            # Ensure assets directory exists
+            os.makedirs(ASSETS_DIR, exist_ok=True)
+
+            # Decode base64 content
+            try:
+                file_data = base64.b64decode(base64_content)
+            except Exception as e:
+                return {'status': 'error', 'message': f'Failed to decode file: {e}'}
+
+            # Generate destination path
+            dest_path = os.path.join(ASSETS_DIR, filename)
+
+            # Check if file already exists
+            if os.path.exists(dest_path):
+                # Add timestamp to filename to avoid overwrite
+                name, ext = os.path.splitext(filename)
+                filename = f"{name}_{int(time.time())}{ext}"
+                dest_path = os.path.join(ASSETS_DIR, filename)
+
+            # Write file
+            with open(dest_path, 'wb') as f:
+                f.write(file_data)
+                # Force filesystem sync to ensure file is written
+                try:
+                    os.fsync(f.fileno())
+                except:
+                    pass
+
+            print(f'[UPLOAD] Saved {filename} to assets ({len(file_data)} bytes)')
+
+            return {
+                'status': 'success',
+                'message': f'Uploaded {filename}',
+                'filename': filename
+            }
+
+        except Exception as e:
+            print(f"[UPLOAD ERROR] {e}")
+            traceback.print_exc()
             return {'status': 'error', 'message': str(e)}
 
     def save_app_settings(self, settings):
@@ -3663,6 +4999,18 @@ class MyScene(Scene):
         print(f"[SYSTEM INFO]   manim_version: {info.get('manim_version', 'NOT SET')}")
         print("=" * 80)
         return info
+
+    def get_gpu_info(self):
+        """Get GPU information and availability for OpenGL rendering"""
+        print("[GPU INFO] get_gpu_info() called")
+        gpu_info = detect_gpu()
+        print(f"[GPU INFO] GPU Available: {gpu_info['available']}")
+        print(f"[GPU INFO] GPU Info: {gpu_info['info']}")
+        return gpu_info
+
+    def get_performance_data(self):
+        """Get current performance metrics for CPU, GPU, RAM, VRAM"""
+        return get_performance_metrics()
 
     def install_venv(self):
         """Install virtual environment - called by user confirmation"""
@@ -3876,6 +5224,434 @@ class MyScene(Scene):
             traceback.print_exc()
             return {'status': 'error', 'message': str(e)}
 
+    def get_installed_packages(self):
+        """Get list of installed packages in the virtual environment"""
+        try:
+            print("[VENV] Getting installed packages...")
+
+            # Get venv Python executable
+            if os.name == 'nt':
+                venv_python = os.path.join(VENV_DIR, 'Scripts', 'python.exe')
+            else:
+                venv_python = os.path.join(VENV_DIR, 'bin', 'python')
+
+            if not os.path.exists(venv_python):
+                return {
+                    'status': 'error',
+                    'message': 'Virtual environment not found. Please install it first.',
+                    'packages': []
+                }
+
+            # Run pip list --format=json
+            cmd = [venv_python, '-m', 'pip', 'list', '--format=json']
+            env = get_clean_environment()
+
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                env=env,
+                timeout=30
+            )
+
+            if result.returncode == 0:
+                import json
+                packages = json.loads(result.stdout)
+                print(f"[VENV] Found {len(packages)} installed packages")
+                return {
+                    'status': 'success',
+                    'packages': packages
+                }
+            else:
+                return {
+                    'status': 'error',
+                    'message': f'Failed to get package list: {result.stderr}',
+                    'packages': []
+                }
+
+        except Exception as e:
+            print(f"[VENV ERROR] {e}")
+            traceback.print_exc()
+            return {
+                'status': 'error',
+                'message': str(e),
+                'packages': []
+            }
+
+    def check_package_dependencies(self, package_name):
+        """Check package dependencies and potential conflicts before installation"""
+        try:
+            print(f"[VENV] Checking dependencies for: {package_name}")
+
+            if not package_name or not package_name.strip():
+                return {'status': 'error', 'message': 'Package name cannot be empty'}
+
+            # Get venv Python executable
+            if os.name == 'nt':
+                venv_python = os.path.join(VENV_DIR, 'Scripts', 'python.exe')
+            else:
+                venv_python = os.path.join(VENV_DIR, 'bin', 'python')
+
+            if not os.path.exists(venv_python):
+                return {'status': 'error', 'message': 'Virtual environment not found'}
+
+            # Use pip to do a dry-run installation to check dependencies
+            cmd = [venv_python, '-m', 'pip', 'install', '--dry-run', '--report', '-', package_name]
+            env = get_clean_environment()
+
+            print(f"[VENV] Running dependency check: {' '.join(cmd)}")
+
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                env=env,
+                timeout=60
+            )
+
+            # Critical packages that should not be changed (to protect Manim)
+            critical_packages = ['manim', 'manim-fonts', 'manimce', 'cairo', 'pycairo',
+                               'manimpango', 'pango', 'numpy', 'pillow', 'scipy',
+                               'moderngl', 'pygments']
+
+            warnings = []
+            conflicts = []
+            dependencies = []
+
+            # Parse the output to find what will be installed/upgraded
+            if result.returncode == 0 or 'install' in result.stdout.lower():
+                import json
+                try:
+                    # Try to parse JSON report
+                    report = json.loads(result.stdout)
+                    if 'install' in report:
+                        for pkg in report['install']:
+                            pkg_name = pkg.get('metadata', {}).get('name', '').lower()
+                            if pkg_name:
+                                dependencies.append({
+                                    'name': pkg_name,
+                                    'version': pkg.get('metadata', {}).get('version', 'unknown')
+                                })
+                                # Check if it's a critical package
+                                if pkg_name in critical_packages:
+                                    conflicts.append({
+                                        'name': pkg_name,
+                                        'type': 'critical',
+                                        'message': f'Will modify {pkg_name} which is critical for Manim'
+                                    })
+                except:
+                    # Fallback: parse text output
+                    lines = result.stdout.split('\n')
+                    for line in lines:
+                        if 'Would install' in line or 'would install' in line:
+                            # Extract package names
+                            parts = line.split('Would install')[-1].strip()
+                            for pkg in parts.split():
+                                pkg_name = pkg.split('-')[0].lower()
+                                if pkg_name in critical_packages:
+                                    warnings.append(f'May affect critical package: {pkg_name}')
+
+            # Also check with pip check for conflicts
+            check_cmd = [venv_python, '-m', 'pip', 'check']
+            check_result = subprocess.run(
+                check_cmd,
+                capture_output=True,
+                text=True,
+                env=env,
+                timeout=30
+            )
+
+            # Return comprehensive information
+            return {
+                'status': 'success',
+                'package': package_name,
+                'dependencies': dependencies,
+                'conflicts': conflicts,
+                'warnings': warnings,
+                'has_conflicts': len(conflicts) > 0,
+                'safe_to_install': len(conflicts) == 0,
+                'output': result.stdout
+            }
+
+        except subprocess.TimeoutExpired:
+            return {'status': 'error', 'message': 'Dependency check timed out'}
+        except Exception as e:
+            print(f"[VENV ERROR] {e}")
+            traceback.print_exc()
+            return {'status': 'error', 'message': str(e)}
+
+    def install_package(self, package_name):
+        """Install a package in the virtual environment"""
+        try:
+            print(f"[VENV] Installing package: {package_name}")
+
+            if not package_name or not package_name.strip():
+                return {'status': 'error', 'message': 'Package name cannot be empty'}
+
+            # Get venv Python executable
+            if os.name == 'nt':
+                venv_python = os.path.join(VENV_DIR, 'Scripts', 'python.exe')
+            else:
+                venv_python = os.path.join(VENV_DIR, 'bin', 'python')
+
+            if not os.path.exists(venv_python):
+                return {'status': 'error', 'message': 'Virtual environment not found'}
+
+            # Run pip install
+            cmd = [venv_python, '-m', 'pip', 'install', package_name]
+            env = get_clean_environment()
+
+            print(f"[VENV] Running: {' '.join(cmd)}")
+
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                env=env,
+                timeout=300  # 5 minute timeout
+            )
+
+            if result.returncode == 0:
+                print(f"[VENV] Successfully installed: {package_name}")
+                return {
+                    'status': 'success',
+                    'message': f'Successfully installed {package_name}',
+                    'output': result.stdout
+                }
+            else:
+                print(f"[VENV] Installation failed: {result.stderr}")
+                return {
+                    'status': 'error',
+                    'message': f'Installation failed: {result.stderr}',
+                    'output': result.stderr
+                }
+
+        except subprocess.TimeoutExpired:
+            return {'status': 'error', 'message': 'Installation timed out'}
+        except Exception as e:
+            print(f"[VENV ERROR] {e}")
+            traceback.print_exc()
+            return {'status': 'error', 'message': str(e)}
+
+    def uninstall_package(self, package_name):
+        """Uninstall a package from the virtual environment"""
+        try:
+            print(f"[VENV] Uninstalling package: {package_name}")
+
+            if not package_name or not package_name.strip():
+                return {'status': 'error', 'message': 'Package name cannot be empty'}
+
+            # Prevent uninstalling critical packages
+            critical_packages = ['pip', 'setuptools', 'wheel', 'manim', 'manim-fonts']
+            if package_name.lower() in critical_packages:
+                return {
+                    'status': 'error',
+                    'message': f'Cannot uninstall critical package: {package_name}'
+                }
+
+            # Get venv Python executable
+            if os.name == 'nt':
+                venv_python = os.path.join(VENV_DIR, 'Scripts', 'python.exe')
+            else:
+                venv_python = os.path.join(VENV_DIR, 'bin', 'python')
+
+            if not os.path.exists(venv_python):
+                return {'status': 'error', 'message': 'Virtual environment not found'}
+
+            # Run pip uninstall -y
+            cmd = [venv_python, '-m', 'pip', 'uninstall', '-y', package_name]
+            env = get_clean_environment()
+
+            print(f"[VENV] Running: {' '.join(cmd)}")
+
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                env=env,
+                timeout=60
+            )
+
+            if result.returncode == 0:
+                print(f"[VENV] Successfully uninstalled: {package_name}")
+                return {
+                    'status': 'success',
+                    'message': f'Successfully uninstalled {package_name}',
+                    'output': result.stdout
+                }
+            else:
+                print(f"[VENV] Uninstallation failed: {result.stderr}")
+                return {
+                    'status': 'error',
+                    'message': f'Uninstallation failed: {result.stderr}',
+                    'output': result.stderr
+                }
+
+        except subprocess.TimeoutExpired:
+            return {'status': 'error', 'message': 'Uninstallation timed out'}
+        except Exception as e:
+            print(f"[VENV ERROR] {e}")
+            traceback.print_exc()
+            return {'status': 'error', 'message': str(e)}
+
+    def check_package_updates(self):
+        """Check for available package updates and check for Manim conflicts"""
+        try:
+            print("[VENV] Checking for package updates...")
+
+            # Get venv Python executable
+            if os.name == 'nt':
+                venv_python = os.path.join(VENV_DIR, 'Scripts', 'python.exe')
+            else:
+                venv_python = os.path.join(VENV_DIR, 'bin', 'python')
+
+            if not os.path.exists(venv_python):
+                return {
+                    'status': 'error',
+                    'message': 'Virtual environment not found',
+                    'updates': []
+                }
+
+            # Run pip list --outdated --format=json
+            cmd = [venv_python, '-m', 'pip', 'list', '--outdated', '--format=json']
+            env = get_clean_environment()
+
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                env=env,
+                timeout=60
+            )
+
+            if result.returncode == 0:
+                import json
+                updates = json.loads(result.stdout) if result.stdout.strip() else []
+                print(f"[VENV] Found {len(updates)} packages with updates available")
+
+                # Critical packages that Manim depends on
+                critical_packages = ['manim', 'manim-fonts', 'manimce', 'cairo', 'pycairo',
+                                   'manimpango', 'pango', 'numpy', 'pillow', 'scipy',
+                                   'moderngl', 'pygments']
+
+                # Check each update for Manim compatibility
+                for update in updates:
+                    package_name = update.get('name', '').lower()
+                    current_version = update.get('version', '')
+                    latest_version = update.get('latest_version', '')
+
+                    # Default values
+                    update['safe_to_update'] = True
+                    update['warning'] = None
+                    update['is_critical'] = False
+
+                    # Check if it's a critical package
+                    if package_name in critical_packages:
+                        update['is_critical'] = True
+                        update['safe_to_update'] = False
+                        update['warning'] = f'⚠️ Critical for Manim - updating may cause compatibility issues'
+                        print(f"[VENV] WARNING: {package_name} is critical for Manim")
+
+                    # For non-critical packages, do a dry-run to check dependencies
+                    elif package_name not in critical_packages:
+                        try:
+                            # Quick check using pip install --dry-run
+                            check_cmd = [venv_python, '-m', 'pip', 'install', '--dry-run', '--upgrade', package_name]
+                            check_result = subprocess.run(
+                                check_cmd,
+                                capture_output=True,
+                                text=True,
+                                env=env,
+                                timeout=30
+                            )
+
+                            # Check if output mentions critical packages
+                            output_lower = (check_result.stdout + check_result.stderr).lower()
+                            affected_critical = [pkg for pkg in critical_packages if pkg in output_lower]
+
+                            if affected_critical:
+                                update['safe_to_update'] = False
+                                update['warning'] = f'⚠️ May affect: {", ".join(affected_critical)}'
+                                print(f"[VENV] WARNING: Updating {package_name} may affect: {affected_critical}")
+                        except Exception as check_error:
+                            print(f"[VENV] Could not check {package_name}: {check_error}")
+                            # If we can't check, mark as potentially unsafe
+                            update['safe_to_update'] = True
+                            update['warning'] = None
+
+                return {
+                    'status': 'success',
+                    'updates': updates
+                }
+            else:
+                return {
+                    'status': 'error',
+                    'message': f'Failed to check updates: {result.stderr}',
+                    'updates': []
+                }
+
+        except Exception as e:
+            print(f"[VENV ERROR] {e}")
+            traceback.print_exc()
+            return {
+                'status': 'error',
+                'message': str(e),
+                'updates': []
+            }
+
+    def update_package(self, package_name):
+        """Update a package to the latest version"""
+        try:
+            print(f"[VENV] Updating package: {package_name}")
+
+            if not package_name or not package_name.strip():
+                return {'status': 'error', 'message': 'Package name cannot be empty'}
+
+            # Get venv Python executable
+            if os.name == 'nt':
+                venv_python = os.path.join(VENV_DIR, 'Scripts', 'python.exe')
+            else:
+                venv_python = os.path.join(VENV_DIR, 'bin', 'python')
+
+            if not os.path.exists(venv_python):
+                return {'status': 'error', 'message': 'Virtual environment not found'}
+
+            # Run pip install --upgrade
+            cmd = [venv_python, '-m', 'pip', 'install', '--upgrade', package_name]
+            env = get_clean_environment()
+
+            print(f"[VENV] Running: {' '.join(cmd)}")
+
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                env=env,
+                timeout=300  # 5 minute timeout
+            )
+
+            if result.returncode == 0:
+                print(f"[VENV] Successfully updated: {package_name}")
+                return {
+                    'status': 'success',
+                    'message': f'Successfully updated {package_name}',
+                    'output': result.stdout
+                }
+            else:
+                print(f"[VENV] Update failed: {result.stderr}")
+                return {
+                    'status': 'error',
+                    'message': f'Update failed: {result.stderr}',
+                    'output': result.stderr
+                }
+
+        except subprocess.TimeoutExpired:
+            return {'status': 'error', 'message': 'Update timed out'}
+        except Exception as e:
+            print(f"[VENV ERROR] {e}")
+            traceback.print_exc()
+            return {'status': 'error', 'message': str(e)}
+
 
 def find_free_port():
     """Find a free port on localhost"""
@@ -3979,25 +5755,50 @@ def start_app():
         html_path = os.path.join(BASE_DIR, 'web', 'setup.html')
         window_title = 'Manim Studio - Virtual Environment Setup'
 
+    # DEBUG: Verify HTML file exists
+    print(f"[DEBUG] HTML Path: {html_path}")
+    print(f"[DEBUG] HTML exists: {os.path.exists(html_path)}")
+    print(f"[DEBUG] BASE_DIR: {BASE_DIR}")
+    print(f"[DEBUG] web folder exists: {os.path.exists(os.path.join(BASE_DIR, 'web'))}")
+    if os.path.exists(os.path.join(BASE_DIR, 'web')):
+        web_contents = os.listdir(os.path.join(BASE_DIR, 'web'))
+        print(f"[DEBUG] web folder contents: {web_contents}")
+
+    if not os.path.exists(html_path):
+        print(f"[ERROR] HTML file not found at: {html_path}")
+        print("[ERROR] Cannot create window without HTML file!")
+        print("[ERROR] Application will exit")
+        return
+
     # Create native desktop window
-    window = webview.create_window(
-        title=window_title,
-        url=html_path,
-        js_api=api,
-        width=1600,
-        height=1000,
-        resizable=True,
-        frameless=False,
-        easy_drag=False,
-        min_size=(1200, 800)
-    )
+    print(f"[DEBUG] Creating webview window...")
+    print(f"[DEBUG] Title: {window_title}")
+    try:
+        window = webview.create_window(
+            title=window_title,
+            url=html_path,
+            js_api=api,
+            width=1600,
+            height=1000,
+            resizable=True,
+            frameless=False,
+            easy_drag=False,
+            min_size=(1200, 800)
+        )
+        print(f"[DEBUG] Window created successfully")
 
-    # Store window reference
-    app_state['window'] = window
+        # Store window reference
+        app_state['window'] = window
 
-    # Start the application (debug enabled for development)
-    webview.start(debug=False)
-    #webview.start(debug=True)
+        # Start the application
+        print(f"[DEBUG] Starting webview...")
+        webview.start(debug=False)
+        print(f"[DEBUG] Webview started and returned")
+    except Exception as e:
+        print(f"[ERROR] Failed to create or start window: {e}")
+        import traceback
+        traceback.print_exc()
+        return
 
 
 
@@ -4064,8 +5865,37 @@ def cleanup_on_exit():
     print("[OK] Cleanup complete")
 
 if __name__ == '__main__':
+    # CRITICAL: Must be first for frozen exe with pywebview (uses multiprocessing)
+    # Without this, exe will freeze/not open when console is disabled
+    import multiprocessing
+    multiprocessing.freeze_support()
+
     import atexit
     atexit.register(cleanup_on_exit)
+
+    # When running as frozen exe, also log to file for debugging double-click issues
+    if getattr(sys, 'frozen', False):
+        log_file = os.path.join(USER_DATA_DIR, 'manim_studio_debug.log')
+        try:
+            os.makedirs(USER_DATA_DIR, exist_ok=True)
+            log_handle = open(log_file, 'w', encoding='utf-8')
+
+            # Create a custom print that writes to both console and file
+            original_print = print
+            def print_dual(*args, **kwargs):
+                original_print(*args, **kwargs)
+                try:
+                    original_print(*args, **kwargs, file=log_handle, flush=True)
+                except:
+                    pass
+
+            # Replace built-in print
+            import builtins
+            builtins.print = print_dual
+
+            print(f"[LOGGING] Debug log file created: {log_file}")
+        except Exception as e:
+            print(f"[WARNING] Could not create debug log: {e}")
 
     print("=" * 60)
     print("Starting Manim Studio Desktop App...")
@@ -4076,4 +5906,13 @@ if __name__ == '__main__':
     print(f"Assets Directory: {ASSETS_DIR}")
     print(f"Preview Directory: {PREVIEW_DIR}")
     print("=" * 60)
-    start_app()
+
+    try:
+        start_app()
+    except Exception as e:
+        print(f"[FATAL ERROR] Application crashed: {e}")
+        import traceback
+        traceback.print_exc()
+        # Keep window open if there's an error
+        if getattr(sys, 'frozen', False):
+            input("Press Enter to exit...")
