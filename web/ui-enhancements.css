@@ -1,22 +1,23 @@
 /* ============================================================================
-   UI ENHANCEMENTS - Modern Visual Upgrades
+   UI ENHANCEMENTS - Premium Visual Experience
    ============================================================================ */
 
-/* Glassmorphism Panel Effect */
+/* Glassmorphism Panel Effect - Enhanced */
 .panel-glass {
-    background: rgba(26, 26, 36, 0.7);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-    border: 1px solid rgba(255, 255, 255, 0.1);
-    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+    background: rgba(18, 18, 26, 0.85);
+    backdrop-filter: blur(16px) saturate(180%);
+    -webkit-backdrop-filter: blur(16px) saturate(180%);
+    border: 1px solid rgba(99, 102, 241, 0.12);
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.45),
+                inset 0 1px 0 rgba(255, 255, 255, 0.05);
 }
 
 /* Enhanced Toolbar */
 .assets-toolbar {
-    background: linear-gradient(180deg, rgba(36, 36, 58, 0.95) 0%, rgba(26, 26, 36, 0.95) 100%) !important;
-    backdrop-filter: blur(8px);
-    border-bottom: 1px solid rgba(59, 130, 246, 0.2) !important;
-    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3);
+    background: linear-gradient(180deg, rgba(26, 26, 40, 0.98) 0%, rgba(18, 18, 26, 0.98) 100%) !important;
+    backdrop-filter: blur(12px) saturate(150%);
+    border-bottom: 1px solid rgba(99, 102, 241, 0.15) !important;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
 }
 
 /* Animated Tab Pills */

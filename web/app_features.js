@@ -91,7 +91,8 @@ let appSettings = {
     fps: 60,
     autoSave: true,
     autoOpenOutput: false,
-    theme: 'dark'
+    theme: 'dark',
+    disableCache: true  // Default: cache disabled
 };
 
 async function loadAppSettings() {
@@ -189,6 +190,7 @@ function showSettingsModal() {
         document.getElementById('settingFPS').value = appSettings.fps || 60;
         document.getElementById('settingAutoSave').checked = appSettings.autoSave !== false;
         document.getElementById('settingAutoOpenOutput').checked = appSettings.autoOpenOutput === true;
+        document.getElementById('settingDisableCache').checked = appSettings.disableCache !== false;
 
         modal.classList.add('active');
         console.log('[SETTINGS] Added active class to modal');
@@ -257,12 +259,14 @@ async function applySettings() {
         const fpsSelect = document.getElementById('settingFPS');
         const autoSaveCheck = document.getElementById('settingAutoSave');
         const autoOpenCheck = document.getElementById('settingAutoOpenOutput');
+        const disableCacheCheck = document.getElementById('settingDisableCache');
 
         if (saveLocationInput) appSettings.defaultSaveLocation = saveLocationInput.value;
         if (qualitySelect) appSettings.renderQuality = qualitySelect.value;
         if (fpsSelect) appSettings.fps = parseInt(fpsSelect.value) || 60;
         if (autoSaveCheck) appSettings.autoSave = autoSaveCheck.checked;
         if (autoOpenCheck) appSettings.autoOpenOutput = autoOpenCheck.checked;
+        if (disableCacheCheck) appSettings.disableCache = disableCacheCheck.checked;
 
         console.log('[SETTINGS] Settings updated:', appSettings);
 
@@ -288,6 +292,190 @@ async function applySettings() {
 
 // Add select_folder method to backend API (in app.py)
 // This will be called from browseSaveLocation()
+
+// ============================================================================
+// AUTOSAVE BACKUP MANAGEMENT
+// ============================================================================
+
+async function loadAutosaveBackups() {
+    console.log('[BACKUPS] Loading autosave backups...');
+    const container = document.getElementById('autosaveBackupsList');
+    if (!container) return;
+
+    container.innerHTML = `
+        <div style="text-align: center; color: var(--text-secondary); padding: 20px;">
+            <i class="fas fa-spinner fa-spin"></i> Loading backups...
+        </div>
+    `;
+
+    try {
+        const result = await window.pywebview.api.get_autosave_files();
+        console.log('[BACKUPS] Result:', result);
+
+        if (result.status === 'success' && result.files && result.files.length > 0) {
+            container.innerHTML = result.files.map((file, index) => {
+                const timestamp = file.timestamp || 'Unknown';
+                const date = new Date(timestamp.replace(/_/g, (m, i) => i < 10 ? '-' : (i === 13 || i === 16 ? ':' : m)));
+                const dateStr = isNaN(date.getTime()) ? timestamp : date.toLocaleString();
+
+                return `
+                    <div class="backup-item" style="display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; background: var(--bg-secondary); border-radius: 6px; margin-bottom: 6px; border: 1px solid var(--border-color);">
+                        <div style="flex: 1;">
+                            <div style="font-size: 13px; color: var(--text-primary); font-weight: 500;">
+                                <i class="fas fa-file-code" style="color: #3b82f6; margin-right: 6px;"></i>
+                                Backup ${index + 1}
+                            </div>
+                            <div style="font-size: 11px; color: var(--text-secondary); margin-top: 2px;">
+                                ${dateStr}
+                            </div>
+                        </div>
+                        <div style="display: flex; gap: 6px;">
+                            <button onclick="restoreBackup('${file.autosave_file.replace(/\\/g, '\\\\')}')"
+                                    style="background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.3); color: #10b981; padding: 5px 10px; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: 600;">
+                                <i class="fas fa-undo"></i> Restore
+                            </button>
+                            <button onclick="deleteBackup('${file.autosave_file.replace(/\\/g, '\\\\')}')"
+                                    style="background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.3); color: #ef4444; padding: 5px 10px; border-radius: 4px; cursor: pointer; font-size: 11px; font-weight: 600;">
+                                <i class="fas fa-trash"></i>
+                            </button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        } else {
+            container.innerHTML = `
+                <div style="text-align: center; color: var(--text-secondary); padding: 30px;">
+                    <i class="fas fa-inbox" style="font-size: 32px; margin-bottom: 10px; opacity: 0.3;"></i>
+                    <p>No backups available</p>
+                </div>
+            `;
+        }
+    } catch (error) {
+        console.error('[BACKUPS] Error loading backups:', error);
+        container.innerHTML = `
+            <div style="text-align: center; color: #ef4444; padding: 20px;">
+                <i class="fas fa-exclamation-circle"></i> Error loading backups
+            </div>
+        `;
+    }
+}
+
+async function restoreBackup(filepath) {
+    if (!confirm('This will replace your current code with the backup. Continue?')) {
+        return;
+    }
+
+    try {
+        const result = await window.pywebview.api.load_autosave(filepath);
+        if (result.status === 'success' && result.code) {
+            // Set editor content
+            if (window.monacoEditor) {
+                window.monacoEditor.setValue(result.code);
+            }
+            closeSettingsModal();
+            if (window.showToast) {
+                window.showToast('Backup restored successfully!', 'success');
+            }
+        } else {
+            alert('Failed to restore backup: ' + (result.message || 'Unknown error'));
+        }
+    } catch (error) {
+        console.error('[BACKUPS] Error restoring backup:', error);
+        alert('Error restoring backup: ' + error.message);
+    }
+}
+
+async function deleteBackup(filepath) {
+    if (!confirm('Delete this backup?')) {
+        return;
+    }
+
+    try {
+        const result = await window.pywebview.api.delete_autosave(filepath);
+        if (result.status === 'success') {
+            loadAutosaveBackups(); // Refresh the list
+            if (window.showToast) {
+                window.showToast('Backup deleted', 'info');
+            }
+        } else {
+            alert('Failed to delete backup: ' + (result.message || 'Unknown error'));
+        }
+    } catch (error) {
+        console.error('[BACKUPS] Error deleting backup:', error);
+        alert('Error deleting backup: ' + error.message);
+    }
+}
+
+async function deleteAllBackups() {
+    if (!confirm('Delete ALL autosave backups? This cannot be undone.')) {
+        return;
+    }
+
+    try {
+        const result = await window.pywebview.api.delete_all_autosaves();
+        if (result.status === 'success') {
+            loadAutosaveBackups(); // Refresh the list
+            if (window.showToast) {
+                window.showToast(`Deleted ${result.deleted_count} backup(s)`, 'success');
+            }
+        } else {
+            alert('Failed to delete backups: ' + (result.message || 'Unknown error'));
+        }
+    } catch (error) {
+        console.error('[BACKUPS] Error deleting all backups:', error);
+        alert('Error deleting backups: ' + error.message);
+    }
+}
+
+async function openBackupsFolder() {
+    try {
+        const result = await window.pywebview.api.open_autosave_folder();
+        if (result.status !== 'success') {
+            alert('Failed to open folder: ' + (result.message || 'Unknown error'));
+        }
+    } catch (error) {
+        console.error('[BACKUPS] Error opening folder:', error);
+        alert('Error opening folder: ' + error.message);
+    }
+}
+
+// ============================================================================
+// CACHE MANAGEMENT
+// ============================================================================
+
+async function clearManimCache() {
+    if (!confirm('Clear all Manim cache files? This includes partial movie files and Tex cache. You may need to re-render animations.')) {
+        return;
+    }
+
+    try {
+        const btn = document.getElementById('clearCacheBtn');
+        if (btn) {
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Clearing...';
+            btn.disabled = true;
+        }
+
+        const result = await window.pywebview.api.clear_manim_cache();
+
+        if (btn) {
+            btn.innerHTML = '<i class="fas fa-trash"></i> Clear Manim Cache';
+            btn.disabled = false;
+        }
+
+        if (result.status === 'success') {
+            if (window.showToast) {
+                window.showToast(`Cache cleared: ${result.deleted_count} files (${result.deleted_size_mb} MB)`, 'success');
+            } else {
+                alert(`Cache cleared: ${result.deleted_count} files (${result.deleted_size_mb} MB)`);
+            }
+        } else {
+            alert('Failed to clear cache: ' + (result.message || 'Unknown error'));
+        }
+    } catch (error) {
+        console.error('[CACHE] Error clearing cache:', error);
+        alert('Error clearing cache: ' + error.message);
+    }
+}
 
 // ============================================================================
 // EVENT LISTENERS SETUP

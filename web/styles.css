@@ -1,43 +1,64 @@
-/* Modern Dark Theme with Enhanced Visuals */
+/* Modern Dark Theme with Enhanced Visuals - Premium Edition */
 :root {
-    /* Background Colors - Enhanced with gradients */
-    --bg-primary: #0f0f14;
-    --bg-secondary: #1a1a24;
-    --bg-tertiary: #24243a;
-    --bg-surface: #2d2d45;
-    --bg-hover: #323250;
+    /* Background Colors - Rich, deep tones with subtle warmth */
+    --bg-primary: #0a0a0f;
+    --bg-secondary: #12121a;
+    --bg-tertiary: #1a1a28;
+    --bg-surface: #222235;
+    --bg-hover: #2a2a42;
+    --bg-elevated: #2d2d48;
+    --bg-card: rgba(26, 26, 40, 0.8);
 
-    /* Text Colors */
-    --text-primary: #e4e4e7;
-    --text-secondary: #9ca3af;
+    /* Text Colors - Enhanced contrast */
+    --text-primary: #f0f0f5;
+    --text-secondary: #a8a8b8;
     --text-bright: #ffffff;
-    --text-dim: #6b7280;
+    --text-dim: #6b6b80;
+    --text-muted: #505068;
 
-    /* Accent Colors - Modern palette */
-    --accent-primary: #3b82f6;
-    --accent-hover: #2563eb;
-    --accent-secondary: #8b5cf6;
-    --accent-success: #10b981;
+    /* Accent Colors - Vibrant modern palette */
+    --accent-primary: #6366f1;
+    --accent-hover: #4f46e5;
+    --accent-secondary: #a855f7;
+    --accent-tertiary: #ec4899;
+    --accent-success: #22c55e;
     --accent-warning: #f59e0b;
     --accent-error: #ef4444;
-    --accent-info: #06b6d4;
+    --accent-info: #0ea5e9;
+    --accent-cyan: #06b6d4;
+    --accent-rose: #f43f5e;
+    --accent-amber: #fbbf24;
+    --accent-emerald: #34d399;
 
-    /* Gradients */
-    --gradient-primary: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    --gradient-success: linear-gradient(135deg, #10b981 0%, #059669 100%);
+    /* Gradients - Rich, modern gradients */
+    --gradient-primary: linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #a855f7 100%);
+    --gradient-secondary: linear-gradient(135deg, #ec4899 0%, #f43f5e 100%);
+    --gradient-success: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
     --gradient-error: linear-gradient(135deg, #ef4444 0%, #dc2626 100%);
-    --gradient-info: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
-    --gradient-surface: linear-gradient(145deg, #1a1a24 0%, #0f0f14 100%);
+    --gradient-info: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%);
+    --gradient-warning: linear-gradient(135deg, #f59e0b 0%, #d97706 100%);
+    --gradient-surface: linear-gradient(145deg, #12121a 0%, #0a0a0f 100%);
+    --gradient-card: linear-gradient(145deg, rgba(26, 26, 40, 0.9) 0%, rgba(18, 18, 26, 0.9) 100%);
+    --gradient-header: linear-gradient(180deg, #12121a 0%, #0a0a0f 100%);
+    --gradient-glow: linear-gradient(135deg, rgba(99, 102, 241, 0.15) 0%, rgba(168, 85, 247, 0.15) 100%);
+    --gradient-accent: linear-gradient(135deg, #6366f1 0%, #a855f7 100%);
+    --gradient-render: linear-gradient(135deg, #6366f1 0%, #0ea5e9 100%);
+    --gradient-preview: linear-gradient(135deg, #f59e0b 0%, #ec4899 100%);
 
-    /* Border & Shadow */
-    --border-color: #374151;
-    --border-bright: #4b5563;
-    --selection-bg: #3730a3;
-    --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
-    --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4), 0 2px 4px -1px rgba(0, 0, 0, 0.3);
-    --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.5), 0 4px 6px -2px rgba(0, 0, 0, 0.4);
-    --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.6), 0 10px 10px -5px rgba(0, 0, 0, 0.5);
-    --shadow-glow: 0 0 20px rgba(59, 130, 246, 0.4);
+    /* Border & Shadow - Enhanced depth */
+    --border-color: rgba(99, 102, 241, 0.15);
+    --border-bright: rgba(99, 102, 241, 0.3);
+    --border-subtle: rgba(255, 255, 255, 0.06);
+    --border-glow: rgba(99, 102, 241, 0.4);
+    --selection-bg: rgba(99, 102, 241, 0.4);
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4), 0 1px 3px rgba(0, 0, 0, 0.3);
+    --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.5), 0 2px 4px -2px rgba(0, 0, 0, 0.4);
+    --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.6), 0 4px 6px -4px rgba(0, 0, 0, 0.5);
+    --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.7), 0 8px 10px -6px rgba(0, 0, 0, 0.6);
+    --shadow-2xl: 0 25px 50px -12px rgba(0, 0, 0, 0.8);
+    --shadow-glow: 0 0 20px rgba(99, 102, 241, 0.35);
+    --shadow-glow-lg: 0 0 40px rgba(99, 102, 241, 0.25);
+    --shadow-inner: inset 0 2px 4px rgba(0, 0, 0, 0.3);
 
     /* Spacing */
     --spacing-xs: 4px;
@@ -45,17 +66,21 @@
     --spacing-md: 16px;
     --spacing-lg: 24px;
     --spacing-xl: 32px;
+    --spacing-2xl: 48px;
 
-    /* Transitions */
+    /* Transitions - Smooth, premium feel */
     --transition-fast: 150ms cubic-bezier(0.4, 0, 0.2, 1);
     --transition-normal: 250ms cubic-bezier(0.4, 0, 0.2, 1);
     --transition-slow: 350ms cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-bounce: 500ms cubic-bezier(0.68, -0.55, 0.265, 1.55);
 
     /* Border Radius */
     --radius-sm: 6px;
     --radius-md: 8px;
     --radius-lg: 12px;
     --radius-xl: 16px;
+    --radius-2xl: 20px;
+    --radius-full: 9999px;
 }
 
 body[data-theme='default'] {
@@ -1603,9 +1628,9 @@ div[style*="font-family"] {
 
 #previewVideo {
     background: #000;
-    aspect-ratio: 16 / 9;
     cursor: pointer;
     position: relative;
+    /* Removed fixed aspect-ratio to allow video to display at its natural dimensions */
 }
 
 /* Ensure visibility when shown - OPTIMIZED: Removed animation for faster display */
@@ -1615,12 +1640,14 @@ div[style*="font-family"] {
 }
 
 .preview-media {
-    width: 100% !important;
+    max-width: 100% !important;
+    max-height: 100% !important;
+    width: auto !important;
     height: auto !important;
-    max-width: 100%;
     object-fit: contain;
     position: relative;
     z-index: 10;
+    display: block;
 }
 
 @keyframes fadeIn {
@@ -2768,7 +2795,7 @@ div[style*="font-family"] {
     align-items: center;
     justify-content: center;
     position: relative;
-    overflow: hidden;
+    overflow: auto; /* Changed from hidden to auto for scrolling if needed */
     margin: 0;
     border: 0;
     box-shadow: inset 0 2px 10px rgba(0, 0, 0, 0.5);
@@ -2777,10 +2804,13 @@ div[style*="font-family"] {
 .preview-media-container {
     width: 100%;
     height: 100%;
+    max-height: 100%; /* Ensure it doesn't exceed viewport */
     display: flex;
     align-items: center;
     justify-content: center;
     position: relative;
+    padding: 10px; /* Add some padding so video doesn't touch edges */
+    box-sizing: border-box;
 }
 
 .preview-viewport.fullscreen {
@@ -3164,6 +3194,395 @@ div[style*="font-family"] {
     flex-direction: column;
     padding: 0;
     overflow: hidden;
+}
+
+/* Venv/Package Manager Tab Styles */
+.venv-container {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    background: linear-gradient(135deg, #0d1117 0%, #161b22 100%);
+    padding: 20px;
+    gap: 20px;
+    overflow: hidden;
+}
+
+.venv-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding-bottom: 15px;
+    border-bottom: 2px solid rgba(255, 255, 255, 0.1);
+}
+
+.venv-header h2 {
+    font-size: 28px;
+    font-weight: 600;
+    color: var(--text-primary);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 0;
+}
+
+.venv-header h2 i {
+    color: #3b82f6;
+}
+
+.venv-header-actions {
+    display: flex;
+    gap: 10px;
+}
+
+.venv-btn {
+    padding: 10px 20px;
+    background: rgba(59, 130, 246, 0.15);
+    border: 1px solid rgba(59, 130, 246, 0.3);
+    border-radius: 8px;
+    color: #3b82f6;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.venv-btn:hover {
+    background: rgba(59, 130, 246, 0.25);
+    border-color: rgba(59, 130, 246, 0.5);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.3);
+}
+
+.venv-install-section {
+    background: rgba(255, 255, 255, 0.03);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    padding: 20px;
+}
+
+.venv-install-section h3 {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0 0 15px 0;
+}
+
+.venv-install-form {
+    display: flex;
+    gap: 12px;
+}
+
+.venv-install-form input {
+    flex: 1;
+    padding: 12px 16px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 8px;
+    color: var(--text-primary);
+    font-size: 14px;
+    font-family: 'Segoe UI', sans-serif;
+    transition: all 0.3s ease;
+}
+
+.venv-install-form input:focus {
+    outline: none;
+    border-color: #3b82f6;
+    background: rgba(255, 255, 255, 0.08);
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.venv-install-form input::placeholder {
+    color: var(--text-secondary);
+}
+
+.venv-btn-primary {
+    padding: 12px 24px;
+    background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+    border: none;
+    border-radius: 8px;
+    color: white;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    white-space: nowrap;
+}
+
+.venv-btn-primary:hover {
+    background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+}
+
+.venv-btn-primary:active {
+    transform: translateY(0);
+}
+
+.venv-packages-section {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.venv-packages-section h3 {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0 0 15px 0;
+}
+
+.venv-packages-list {
+    flex: 1;
+    background: rgba(255, 255, 255, 0.03);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 12px;
+    overflow-y: auto;
+    padding: 0;
+}
+
+.venv-loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 40px;
+    color: var(--text-secondary);
+    font-size: 16px;
+    gap: 12px;
+}
+
+.venv-loading i {
+    font-size: 20px;
+}
+
+.package-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 20px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    transition: all 0.2s ease;
+}
+
+.package-item:hover {
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.package-item:last-child {
+    border-bottom: none;
+}
+
+.package-item.has-update {
+    background: rgba(34, 197, 94, 0.05);
+    border-left: 3px solid #22c55e;
+}
+
+.package-info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.package-name {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.package-version {
+    font-size: 13px;
+    color: var(--text-secondary);
+    font-family: 'Consolas', 'Monaco', monospace;
+}
+
+.package-update-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: 10px;
+    padding: 4px 10px;
+    background: rgba(34, 197, 94, 0.15);
+    border: 1px solid rgba(34, 197, 94, 0.3);
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    color: #22c55e;
+}
+
+.package-latest {
+    color: #22c55e;
+    font-weight: 600;
+    margin-left: 8px;
+}
+
+.package-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.package-btn {
+    padding: 6px 14px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    border: none;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.package-btn-update {
+    background: rgba(34, 197, 94, 0.15);
+    color: #22c55e;
+    border: 1px solid rgba(34, 197, 94, 0.3);
+}
+
+.package-btn-update:hover {
+    background: rgba(34, 197, 94, 0.25);
+    border-color: rgba(34, 197, 94, 0.5);
+    transform: translateY(-1px);
+}
+
+.package-btn-update:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none !important;
+}
+
+.package-btn-warning {
+    background: rgba(245, 158, 11, 0.15);
+    color: #f59e0b;
+    border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.package-btn-warning:hover {
+    background: rgba(245, 158, 11, 0.25);
+    border-color: rgba(245, 158, 11, 0.5);
+}
+
+.package-item.has-warning {
+    border-left: 3px solid #f59e0b;
+    background: rgba(245, 158, 11, 0.05);
+}
+
+.package-btn-uninstall {
+    background: rgba(239, 68, 68, 0.15);
+    color: #ef4444;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.package-btn-uninstall:hover {
+    background: rgba(239, 68, 68, 0.25);
+    border-color: rgba(239, 68, 68, 0.5);
+    transform: translateY(-1px);
+}
+
+.package-btn-uninstall:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none !important;
+}
+
+.venv-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 60px 20px;
+    color: var(--text-secondary);
+    text-align: center;
+}
+
+.venv-empty i {
+    font-size: 48px;
+    margin-bottom: 16px;
+    color: rgba(255, 255, 255, 0.2);
+}
+
+.venv-empty p {
+    font-size: 16px;
+    margin: 0;
+}
+
+/* Toast Notifications */
+.toast {
+    position: fixed;
+    top: 80px;
+    right: -400px;
+    background: rgba(30, 30, 30, 0.95);
+    backdrop-filter: blur(10px);
+    border-radius: 12px;
+    padding: 16px 20px;
+    min-width: 320px;
+    max-width: 400px;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+    z-index: 10000;
+    transition: right 0.3s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.toast.show {
+    right: 20px;
+}
+
+.toast-icon {
+    font-size: 24px;
+    flex-shrink: 0;
+}
+
+.toast-success .toast-icon {
+    color: #22c55e;
+}
+
+.toast-error .toast-icon {
+    color: #ef4444;
+}
+
+.toast-info .toast-icon {
+    color: #3b82f6;
+}
+
+.toast-content {
+    flex: 1;
+}
+
+.toast-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+}
+
+.toast-message {
+    font-size: 13px;
+    color: var(--text-secondary);
+    line-height: 1.4;
+}
+
+.toast-success {
+    border-left: 3px solid #22c55e;
+}
+
+.toast-error {
+    border-left: 3px solid #ef4444;
+}
+
+.toast-info {
+    border-left: 3px solid #3b82f6;
 }
 
 

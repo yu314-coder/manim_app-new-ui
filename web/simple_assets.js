@@ -21,7 +21,7 @@ window.uploadAssets = async function() {
     }
 };
 
-// Load and display assets in Windows Explorer Details List view
+// Load and display assets in Modern Card Grid view
 window.loadAssets = async function() {
     console.log('[SIMPLE] Loading assets...');
     const container = document.getElementById('simpleAssetsContainer');
@@ -36,86 +36,108 @@ window.loadAssets = async function() {
         console.log('[SIMPLE] Got files:', result);
 
         if (!result.files || result.files.length === 0) {
-            container.innerHTML = '<div style="text-align:center; padding:40px; color:#999;">No assets found. Upload some media files to get started.</div>';
+            container.innerHTML = `
+                <div class="assets-empty">
+                    <i class="fas fa-folder-open"></i>
+                    <p>No assets found. Drag & drop files to get started.</p>
+                </div>
+            `;
             return;
         }
 
-        // Create table with header (Windows Explorer Details view style)
-        const table = document.createElement('div');
-        table.style.cssText = 'width:100%; font-family:system-ui, -apple-system, sans-serif;';
+        // Clear container
+        container.innerHTML = '';
 
-        // Header row
-        const header = document.createElement('div');
-        header.style.cssText = 'display:flex; align-items:center; padding:8px 12px; background:#2a2a2a; border-bottom:2px solid #444; font-weight:600; font-size:13px; color:#aaa;';
-        header.innerHTML = `
-            <div style="width:40px; flex-shrink:0;"></div>
-            <div style="flex:1; min-width:200px;">Name</div>
-            <div style="width:120px; flex-shrink:0;">Size</div>
-            <div style="width:150px; flex-shrink:0;">Type</div>
-            <div style="width:100px; flex-shrink:0; text-align:center;">Actions</div>
-        `;
-        table.appendChild(header);
-
-        // Data rows - using simple HTML approach
+        // Create rows for each file
         result.files.forEach(function(file, index) {
             const ext = file.name.split('.').pop().toLowerCase();
             const fileType = getFileType(ext);
+            const rowType = getCardType(ext);
 
             const row = document.createElement('div');
-            row.style.cssText = 'display:flex; align-items:center; padding:8px 12px; border-bottom:1px solid #333; transition:background 0.15s;';
+            row.className = `asset-row ${rowType}`;
             row.dataset.filepath = file.path;
             row.dataset.filename = file.name;
             row.dataset.index = index;
 
-            // Build HTML directly
+            // Check if it's an image to show thumbnail
+            const imageExts = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'];
+            const isImage = imageExts.includes(ext);
+
             row.innerHTML = `
-                <div style="width:40px; flex-shrink:0; font-size:20px; color:#888;">
-                    ${getAssetIcon(file.name)}
+                <div class="asset-col-preview">
+                    ${isImage ?
+                        `<img class="asset-thumbnail" src="#" data-filepath="${escapeHtml(file.path)}" alt="${escapeHtml(file.name)}">` :
+                        `<div class="asset-preview">${getAssetIcon(file.name)}</div>`
+                    }
                 </div>
-                <div style="flex:1; min-width:200px; font-size:14px; color:#fff; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; cursor:pointer;" class="file-name-cell">
-                    ${escapeHtml(file.name)}
+                <div class="asset-col-name">
+                    <div class="asset-name" title="${escapeHtml(file.name)}">${escapeHtml(file.name)}</div>
                 </div>
-                <div style="width:120px; flex-shrink:0; font-size:13px; color:#aaa;">
-                    ${formatBytes(file.size)}
+                <div class="asset-col-type">
+                    <div class="asset-type">${fileType}</div>
                 </div>
-                <div style="width:150px; flex-shrink:0; font-size:13px; color:#aaa;">
-                    ${fileType}
+                <div class="asset-col-size">
+                    <div class="asset-size">${formatBytes(file.size)}</div>
                 </div>
-                <div style="width:100px; flex-shrink:0; text-align:center;">
-                    <button
-                        class="delete-btn-${index}"
-                        style="padding:6px 12px; background:#dc3545; color:#fff; border:none; border-radius:4px; cursor:pointer; font-size:12px; font-weight:600;"
-                        onclick="event.stopPropagation(); window.deleteAssetById('${escapeForJs(file.path)}', '${escapeForJs(file.name)}');">
-                        Delete
-                    </button>
+                <div class="asset-col-actions">
+                    <div class="asset-actions">
+                        <button class="asset-action-btn" onclick="event.stopPropagation(); showPreviewInAssetsTab('${escapeForJs(file.path)}', '${escapeForJs(file.name)}');">
+                            <i class="fas fa-eye"></i> View
+                        </button>
+                        <button class="asset-action-btn delete" onclick="event.stopPropagation(); window.deleteAssetById('${escapeForJs(file.path)}', '${escapeForJs(file.name)}');">
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </div>
                 </div>
             `;
 
-            // Click row to preview (but not when clicking button)
-            row.querySelector('.file-name-cell').addEventListener('click', function() {
+            // Click row to preview
+            row.addEventListener('click', function() {
                 showPreviewInAssetsTab(file.path, file.name);
             });
 
-            row.addEventListener('mouseenter', function() {
-                this.style.background = '#2a2a2a';
-            });
-            row.addEventListener('mouseleave', function() {
-                this.style.background = 'transparent';
-            });
+            // Load thumbnail for images
+            if (isImage) {
+                const img = row.querySelector('.asset-thumbnail');
+                if (img && window.pywebview && window.pywebview.api) {
+                    window.pywebview.api.read_file_as_base64(file.path)
+                        .then(function(base64Data) {
+                            img.src = `data:image/${ext};base64,${base64Data}`;
+                        })
+                        .catch(function(err) {
+                            console.error('[THUMBNAIL] Failed to load:', err);
+                            // Fallback to icon
+                            img.outerHTML = `<div class="asset-preview">${getAssetIcon(file.name)}</div>`;
+                        });
+                }
+            }
 
-            table.appendChild(row);
+            container.appendChild(row);
         });
 
-        container.innerHTML = '';
-        container.appendChild(table);
-        console.log('[SIMPLE] [OK] Displayed', result.files.length, 'assets in Details List view with delete buttons');
+        console.log('[SIMPLE] [OK] Displayed', result.files.length, 'assets in Column Table view');
 
     } catch (error) {
         console.error('[SIMPLE] Load error:', error);
-        container.innerHTML = '<p style="color: red; padding: 20px;">Error loading assets</p>';
+        container.innerHTML = '<div class="assets-empty"><i class="fas fa-exclamation-triangle"></i><p style="color: #ef4444;">Error loading assets</p></div>';
         showCustomAlert('Error loading assets: ' + error.message, 'error');
     }
 };
+
+// Get card type for styling
+function getCardType(ext) {
+    const videoExts = ['mp4', 'mov', 'avi', 'webm', 'mkv', 'flv', 'm4v'];
+    const imageExts = ['png', 'jpg', 'jpeg', 'gif', 'svg', 'bmp', 'webp', 'ico'];
+    const audioExts = ['mp3', 'wav', 'ogg', 'm4a', 'aac', 'flac', 'wma'];
+    const fontExts = ['ttf', 'otf', 'woff', 'woff2', 'ttc', 'eot'];
+
+    if (videoExts.includes(ext)) return 'video';
+    if (imageExts.includes(ext)) return 'image';
+    if (audioExts.includes(ext)) return 'audio';
+    if (fontExts.includes(ext)) return 'font';
+    return 'other';
+}
 
 // Delete asset
 function deleteAsset(filePath, fileName) {
@@ -155,9 +177,11 @@ function showPreviewInAssetsTab(filepath, filename) {
         return;
     }
 
-    // Update info
+    // Update info with styled filename
     if (previewInfo) {
-        previewInfo.textContent = filename;
+        const ext = filename.split('.').pop().toLowerCase();
+        const fileType = getFileType(ext);
+        previewInfo.innerHTML = `<strong>${escapeHtml(filename)}</strong><br><span style="opacity: 0.7;">${fileType}</span>`;
     }
 
     const ext = filename.split('.').pop().toLowerCase();
@@ -736,7 +760,113 @@ window.deleteAssetById = function(filepath, filename) {
 window.addEventListener('pywebviewready', () => {
     console.log('[SIMPLE] PyWebView ready - loading assets');
     setTimeout(() => window.loadAssets(), 500);
+
+    // Initialize drag and drop
+    initDragAndDrop();
 });
+
+// Initialize Drag and Drop functionality
+function initDragAndDrop() {
+    const dropzone = document.getElementById('assetsDropzone');
+
+    if (!dropzone) {
+        console.warn('[DRAG&DROP] Dropzone not found');
+        return;
+    }
+
+    // Drag and drop is now handled in renderer_desktop.js
+    // Commented out old implementation to prevent conflicts
+    console.log('[DRAG&DROP] Drag and drop handled by renderer_desktop.js');
+
+    // // Prevent default drag behaviors on the entire document
+    // ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+    //     document.body.addEventListener(eventName, preventDefaults, false);
+    // });
+
+    // function preventDefaults(e) {
+    //     e.preventDefault();
+    //     e.stopPropagation();
+    // }
+
+    // // Highlight drop zone when item is dragged over it
+    // ['dragenter', 'dragover'].forEach(eventName => {
+    //     dropzone.addEventListener(eventName, highlight, false);
+    // });
+
+    // ['dragleave', 'drop'].forEach(eventName => {
+    //     dropzone.addEventListener(eventName, unhighlight, false);
+    // });
+
+    // function highlight(e) {
+    //     dropzone.classList.add('dragover');
+    // }
+
+    // function unhighlight(e) {
+    //     dropzone.classList.remove('dragover');
+    // }
+
+    // // Handle dropped files
+    // dropzone.addEventListener('drop', handleDrop, false);
+
+    // async function handleDrop(e) {
+    //     const dt = e.dataTransfer;
+    //     const files = dt.files;
+
+    //     console.log('[DRAG&DROP] Files dropped:', files.length);
+
+    //     if (files.length === 0) {
+    //         console.log('[DRAG&DROP] No files in drop');
+    //         return;
+    //     }
+
+    //     // Convert FileList to array
+    //     const fileArray = Array.from(files);
+
+    //     // Show loading state
+    //     dropzone.innerHTML = `
+    //         <div class="dropzone-icon">
+    //             <i class="fas fa-spinner fa-spin"></i>
+    //         </div>
+    //         <div class="dropzone-content">
+    //             <div class="dropzone-text">Uploading ${fileArray.length} file${fileArray.length > 1 ? 's' : ''}...</div>
+    //             <div class="dropzone-hint">Please wait</div>
+    //         </div>
+    //     `;
+
+    //     try {
+    //         // Get file paths from the dropped files
+    //         // Note: In a desktop app with PyWebView, we need to handle this differently
+    //         // The files from drag-drop are File objects, we need to save them temporarily
+
+    //         // For now, show a message that drag-drop from desktop needs special handling
+    //         console.warn('[DRAG&DROP] Desktop file drag-drop requires special handling in PyWebView');
+
+    //         // Restore dropzone UI
+    //         restoreDropzoneUI();
+
+    //         showCustomAlert('Please use the upload button to add files', 'info');
+
+    //     } catch (error) {
+    //         console.error('[DRAG&DROP] Error handling dropped files:', error);
+    //         restoreDropzoneUI();
+    //         showCustomAlert('Error uploading files: ' + error.message, 'error');
+    //     }
+    // }
+
+    function restoreDropzoneUI() {
+        dropzone.innerHTML = `
+            <div class="dropzone-icon">
+                <i class="fas fa-cloud-upload-alt"></i>
+            </div>
+            <div class="dropzone-content">
+                <div class="dropzone-text">Drag & Drop Files Here</div>
+                <div class="dropzone-hint">or click to browse • Images, Videos, Audio, Fonts & More</div>
+            </div>
+        `;
+    }
+
+    console.log('[DRAG&DROP] Drag and drop initialized');
+}
 
 // Auto-load when Assets tab is clicked
 document.addEventListener('DOMContentLoaded', function() {
@@ -755,6 +885,11 @@ document.addEventListener('DOMContentLoaded', function() {
         console.log('[SIMPLE] Tab listener attached');
     } else {
         console.warn('[SIMPLE] Assets tab button not found');
+    }
+
+    // Initialize drag and drop if pywebview is already ready
+    if (window.pywebview && window.pywebview.api) {
+        setTimeout(() => initDragAndDrop(), 100);
     }
 });
 

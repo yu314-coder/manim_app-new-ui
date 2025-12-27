@@ -190,6 +190,66 @@ class MyScene(Scene):
 }
 
 // Helper functions
+function delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// Force refresh the UI by clearing and repopulating the DOM
+async function forceRefreshAssetsUI() {
+    console.log('[FORCE-REFRESH] Starting forced UI refresh');
+
+    const container = document.getElementById('assetsGrid');
+    if (!container) {
+        console.error('[FORCE-REFRESH] assetsGrid container not found!');
+        return;
+    }
+
+    // Step 1: Clear the DOM completely
+    console.log('[FORCE-REFRESH] Clearing container');
+    container.innerHTML = '';
+
+    // Step 2: Force a reflow to ensure browser processes the clear
+    void container.offsetHeight;
+
+    // Step 3: Wait for browser to paint
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+
+    // Step 4: Fetch fresh data and repopulate
+    console.log('[FORCE-REFRESH] Fetching fresh assets');
+    await refreshAssets(false);
+
+    // Step 5: Force another paint
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+
+    console.log('[FORCE-REFRESH] UI refresh complete');
+}
+
+// Retry refresh until files appear or max attempts reached
+async function refreshAssetsWithRetry(initialDelayMs = 800, retryDelayMs = 500, maxAttempts = 2) {
+    console.log(`[REFRESH-RETRY] Starting retry mechanism (initial delay: ${initialDelayMs}ms, retry delay: ${retryDelayMs}ms, ${maxAttempts} attempts)`);
+
+    // Initial delay to let files be written to disk
+    console.log(`[REFRESH-RETRY] Waiting ${initialDelayMs}ms for files to be written...`);
+    await delay(initialDelayMs);
+
+    for (let i = 0; i < maxAttempts; i++) {
+        console.log(`[REFRESH-RETRY] Attempt ${i + 1}/${maxAttempts}`);
+
+        // Force complete UI refresh
+        await forceRefreshAssetsUI();
+
+        console.log(`[REFRESH-RETRY] Refreshed, current count: ${allAssets.length}`);
+
+        // Wait before next attempt (if not the last one)
+        if (i < maxAttempts - 1) {
+            await delay(retryDelayMs);
+        }
+    }
+
+    console.log(`[REFRESH-RETRY] Completed ${maxAttempts} refresh attempts`);
+    return true;
+}
+
 function getEditorValue() {
     return editor ? editor.getValue() : '';
 }
@@ -788,7 +848,7 @@ async function renderAnimation() {
 
     // Just run the command in terminal - no UI messages
     try {
-        const res = await pywebview.api.render_animation(code, quality, fps);
+        const res = await pywebview.api.render_animation(code, quality, fps, false);
 
         if (res.status === 'error') {
             toast(`Render failed: ${res.message}`, 'error');
@@ -828,9 +888,11 @@ async function quickPreview() {
         return;
     }
 
+    console.log('[PREVIEW] Calling quick_preview with params:', { code: code.substring(0, 50) + '...', quality, fps });
+
     // Just run the command in terminal - no UI messages
     try {
-        const res = await pywebview.api.quick_preview(code, quality, fps);
+        const res = await pywebview.api.quick_preview(code, quality, fps, false);
 
         if (res.status === 'error') {
             toast(`Preview failed: ${res.message}`, 'error');
@@ -920,42 +982,99 @@ async function showPreview(filePath) {
     console.log('[PREVIEW] File type:', ext);
 
     try {
-        // Convert assets folder path to HTTP URL for display
-        console.log('[PREVIEW] Requesting HTTP URL from backend...');
-        const result = await pywebview.api.get_asset_as_data_url(filePath);
+        // Get file as bytes from backend and convert to Blob
+        console.log('[PREVIEW] Requesting file bytes from backend...');
+        const result = await pywebview.api.get_asset_as_bytes(filePath);
 
         console.log('[PREVIEW] Backend response:', result.status);
 
-        if (result.status !== 'success' || !result.dataUrl) {
+        if (result.status !== 'success' || !result.data) {
             filenameSpan.textContent = `Error: ${result.message || 'Failed to load'}`;
             if (placeholder) placeholder.style.display = 'flex';
             return;
         }
 
+        // Convert base64 to Blob
+        console.log('[PREVIEW] Converting base64 to Blob...');
+        console.log('[PREVIEW] Base64 data length:', result.data.length, 'chars');
+        console.log('[PREVIEW] Expected file size:', result.size, 'bytes');
+
+        const binaryString = atob(result.data);
+        console.log('[PREVIEW] Decoded binary string length:', binaryString.length, 'bytes');
+
+        const bytes = new Uint8Array(binaryString.length);
+        for (let i = 0; i < binaryString.length; i++) {
+            bytes[i] = binaryString.charCodeAt(i);
+        }
+        console.log('[PREVIEW] Created byte array length:', bytes.length);
+
+        const blob = new Blob([bytes], { type: result.mimeType });
+        const blobUrl = URL.createObjectURL(blob);
+
+        console.log('[PREVIEW] Created Blob, size:', blob.size, 'bytes');
+        console.log('[PREVIEW] Created Blob URL:', blobUrl);
+        console.log('[PREVIEW] Blob type:', blob.type);
+
         // Video formats
         if (ext === 'mp4' || ext === 'mov' || ext === 'webm' || ext === 'avi') {
-            console.log('[PREVIEW] Displaying NEW video with HTTP URL:', result.dataUrl.substring(0, 50) + '...');
+            console.log('[PREVIEW] Displaying NEW video with Blob URL:', blobUrl);
 
             // Set up event handlers before setting src
-            previewVideo.onerror = () => {
+            previewVideo.onerror = (e) => {
+                console.error('========== VIDEO LOAD ERROR ==========');
                 console.error('[PREVIEW] Error loading video:', filename);
+                console.error('[PREVIEW] Error event:', e);
+                console.error('[PREVIEW] Video src that failed:', previewVideo.src);
+                console.error('[PREVIEW] Video currentSrc:', previewVideo.currentSrc);
+                console.error('[PREVIEW] Video error code:', previewVideo.error ? previewVideo.error.code : 'unknown');
+                console.error('[PREVIEW] Video error message:', previewVideo.error ? previewVideo.error.message : 'unknown');
+                console.error('[PREVIEW] Video networkState:', previewVideo.networkState);
+                console.error('[PREVIEW] Video readyState:', previewVideo.readyState);
+
+                // Error codes: 1=ABORTED, 2=NETWORK, 3=DECODE, 4=SRC_NOT_SUPPORTED
+                const errorMessages = {
+                    1: 'MEDIA_ERR_ABORTED - Fetching aborted by user',
+                    2: 'MEDIA_ERR_NETWORK - Network error',
+                    3: 'MEDIA_ERR_DECODE - Decoding error',
+                    4: 'MEDIA_ERR_SRC_NOT_SUPPORTED - Format not supported'
+                };
+                const errorCode = previewVideo.error ? previewVideo.error.code : 0;
+                console.error('[PREVIEW] Error meaning:', errorMessages[errorCode] || 'Unknown error');
+                console.error('======================================');
+
                 filenameSpan.textContent = `Error loading ${filename}`;
             };
 
             previewVideo.onloadeddata = () => {
-                console.log('[PREVIEW] ✅ NEW video loaded successfully:', filename);
+                console.log('========== VIDEO LOADED SUCCESSFULLY ==========');
+                console.log('[PREVIEW] ✅ Video loaded:', filename);
+                console.log('[PREVIEW] Video duration:', previewVideo.duration, 'seconds');
+                console.log('[PREVIEW] Video dimensions:', previewVideo.videoWidth, 'x', previewVideo.videoHeight);
+                console.log('[PREVIEW] Video readyState:', previewVideo.readyState);
+                console.log('==============================================');
             };
 
-            // Add cache-busting parameter to force reload
-            const cacheBuster = Date.now();
-            const videoUrl = result.dataUrl.includes('?')
-                ? `${result.dataUrl}&_=${cacheBuster}`
-                : `${result.dataUrl}?_=${cacheBuster}`;
+            previewVideo.onloadstart = () => {
+                console.log('[PREVIEW] 🔄 Video load started:', filename);
+            };
 
-            console.log('[PREVIEW] Setting NEW video source with cache buster:', cacheBuster);
+            previewVideo.onprogress = () => {
+                console.log('[PREVIEW] 📊 Video loading progress...');
+            };
 
-            // Set src attribute (not using setAttribute to ensure proper handling)
-            previewVideo.src = videoUrl;
+            previewVideo.oncanplay = () => {
+                console.log('[PREVIEW] ▶️ Video can play:', filename);
+            };
+
+            // Use Blob URL from converted bytes
+            console.log('[PREVIEW] ========== SETTING VIDEO SOURCE ==========');
+            console.log('[PREVIEW] Source type: Blob URL');
+            console.log('[PREVIEW] Blob URL:', blobUrl);
+            console.log('[PREVIEW] File size:', result.size, 'bytes');
+            console.log('[PREVIEW] MIME type:', result.mimeType);
+            console.log('[PREVIEW] =======================================');
+
+            previewVideo.src = blobUrl;
 
             // Show video element
             previewVideo.style.display = 'block';
@@ -985,15 +1104,16 @@ async function showPreview(filePath) {
                 filenameSpan.textContent = `Error loading ${filename}`;
             };
 
-            // Add cache-busting parameter to force reload
+            // Use relative path directly (PyWebView can access web directory files)
+            console.log('[PREVIEW] Setting image source:', result.dataUrl);
+
+            // Add cache-busting parameter
             const cacheBuster = Date.now();
             const imageUrl = result.dataUrl.includes('?')
                 ? `${result.dataUrl}&_=${cacheBuster}`
                 : `${result.dataUrl}?_=${cacheBuster}`;
 
-            console.log('[PREVIEW] Setting NEW image source with cache buster:', cacheBuster);
-
-            // Set new src
+            console.log('[PREVIEW] Final image URL:', imageUrl);
             previewImage.src = imageUrl;
 
             // Show image element
@@ -1202,9 +1322,10 @@ let currentFilter = 'all';
 let searchQuery = '';
 let currentAsset = null; // Currently selected asset for modal
 
-async function refreshAssets() {
+async function refreshAssets(preserveOnEmpty = false) {
     console.log('============================================');
     console.log('📦 REFRESHING ASSETS...');
+    console.log(`[ASSETS] preserveOnEmpty: ${preserveOnEmpty}`);
     console.log('============================================');
 
     try {
@@ -1220,9 +1341,15 @@ async function refreshAssets() {
         console.log('[ASSETS] Response:', res);
 
         if (!res.files || res.files.length === 0) {
-            console.log('[ASSETS] No files found');
-            allAssets = [];
-            displayAssets([]);
+            console.log('[ASSETS] No files found in response');
+            // Only clear the UI if we're not preserving on empty
+            if (!preserveOnEmpty) {
+                console.log('[ASSETS] Clearing UI (preserveOnEmpty=false)');
+                allAssets = [];
+                displayAssets([]);
+            } else {
+                console.log('[ASSETS] Keeping existing UI (preserveOnEmpty=true)');
+            }
             return;
         }
 
@@ -1235,6 +1362,10 @@ async function refreshAssets() {
     } catch (err) {
         console.error('[ASSETS] ❌ Failed to refresh assets:', err);
         console.error('[ASSETS] Error stack:', err.stack);
+        // On error during drag-drop, preserve the UI
+        if (preserveOnEmpty) {
+            console.log('[ASSETS] Error occurred but preserving UI');
+        }
     }
 }
 
@@ -1595,19 +1726,68 @@ async function startTerminalPolling() {
 
     console.log('[TERMINAL] Starting PTY output polling for xterm.js...');
 
-    terminalPollInterval = setInterval(async () => {
+    // Adaptive polling: faster when active, slower when idle
+    let consecutiveEmptyPolls = 0;
+    let currentPollInterval = 20; // Start fast
+    const MIN_INTERVAL = 20;      // Fastest: 20ms when active
+    const MAX_INTERVAL = 100;     // Slowest: 100ms when idle
+    const EMPTY_POLLS_THRESHOLD = 10; // After 10 empty polls, slow down
+
+    // Throttle scroll operations using requestAnimationFrame
+    let scrollPending = false;
+    const scheduleScroll = () => {
+        if (!scrollPending) {
+            scrollPending = true;
+            requestAnimationFrame(() => {
+                if (term && typeof term.scrollToBottom === 'function') {
+                    term.scrollToBottom();
+                }
+                // Fallback scroll method
+                const viewport = document.querySelector('.xterm-viewport');
+                if (viewport) {
+                    viewport.scrollTop = viewport.scrollHeight;
+                }
+                scrollPending = false;
+            });
+        }
+    };
+
+    const poll = async () => {
         try {
             const res = await pywebview.api.get_terminal_output();
             if (res.status === 'success' && res.output && term) {
-                // Write PTY output directly to xterm.js terminal
-                term.write(res.output);
-                // Auto-scroll to bottom when new content arrives
-                term.scrollToBottom();
+                if (res.output.length > 0) {
+                    // Got output - write it
+                    term.write(res.output);
+
+                    // Schedule scroll (throttled with RAF)
+                    scheduleScroll();
+
+                    // Reset to fast polling when we have output
+                    consecutiveEmptyPolls = 0;
+                    if (currentPollInterval !== MIN_INTERVAL) {
+                        currentPollInterval = MIN_INTERVAL;
+                        clearInterval(terminalPollInterval);
+                        terminalPollInterval = setInterval(poll, currentPollInterval);
+                    }
+                } else {
+                    // No output - slow down polling gradually
+                    consecutiveEmptyPolls++;
+                    if (consecutiveEmptyPolls >= EMPTY_POLLS_THRESHOLD && currentPollInterval < MAX_INTERVAL) {
+                        currentPollInterval = Math.min(currentPollInterval + 10, MAX_INTERVAL);
+                        clearInterval(terminalPollInterval);
+                        terminalPollInterval = setInterval(poll, currentPollInterval);
+                        console.log(`[TERMINAL] Slowing poll to ${currentPollInterval}ms (idle)`);
+                    }
+                }
             }
         } catch (err) {
             console.error('[TERMINAL] Poll error:', err);
         }
-    }, 20); // Poll every 20ms for very responsive output
+    };
+
+    // Start polling
+    terminalPollInterval = setInterval(poll, currentPollInterval);
 }
 
 async function executeCommand(command) {
@@ -1910,6 +2090,9 @@ window.addEventListener('pywebviewready', () => {
                 refreshAssets();
             }
 
+            // Handle performance monitoring based on active tab
+            handlePerformanceMonitoring();
+
             console.log(`Switched to ${tabName} tab`);
         });
     });
@@ -2030,7 +2213,7 @@ window.addEventListener('pywebviewready', () => {
         console.log('✅ Terminal constructor found, creating instance...');
 
         try {
-            // Create terminal instance
+            // Create terminal instance with performance-optimized settings
             term = new TerminalConstructor({
                 cursorBlink: true,
                 cursorStyle: 'block',
@@ -2063,11 +2246,18 @@ window.addEventListener('pywebviewready', () => {
                     brightWhite: '#f2f2f2'
                 },
                 allowTransparency: false,
-                scrollback: 10000,
+                scrollback: 5000, // Reduced from 10000 for better performance
                 fastScrollModifier: 'shift',
                 fastScrollSensitivity: 5,
-                cols: 80,
-                rows: 24
+                cols: 120,  // Match PTY width for proper progress bar display
+                rows: 30,   // Match PTY height
+                // Performance optimizations
+                rendererType: 'canvas', // Use canvas renderer for better performance
+                disableStdin: false,
+                convertEol: false, // Keep false to preserve \r for progress bars
+                screenReaderMode: false, // Disable for performance
+                macOptionIsMeta: true,
+                rightClickSelectsWord: true
             });
 
             // Open terminal in container
@@ -2204,6 +2394,7 @@ window.addEventListener('pywebviewready', () => {
             let lastCols = 10;
             let lastRows = 5;
             let resizeTimeout = null;
+            let lastResizeTime = 0;
 
             const resizeObserver = new ResizeObserver(() => {
                 if (term && terminalContainer) {
@@ -2213,12 +2404,22 @@ window.addEventListener('pywebviewready', () => {
                     }
 
                     resizeTimeout = setTimeout(() => {
+                        // Throttle resize operations - minimum 250ms between resizes
+                        const now = Date.now();
+                        if (now - lastResizeTime < 250) {
+                            return;
+                        }
+
                         const size = calculateTerminalSize();
 
                         // Only resize if dimensions actually changed significantly
                         if (size.cols > 0 && size.rows > 0 && (size.cols !== lastCols || size.rows !== lastRows)) {
                             console.log(`[TERMINAL] Auto-resizing from ${lastCols}x${lastRows} to ${size.cols}x${size.rows}`);
-                            term.resize(size.cols, size.rows);
+
+                            // Use requestAnimationFrame for smooth resize
+                            requestAnimationFrame(() => {
+                                term.resize(size.cols, size.rows);
+                            });
 
                             // Notify backend PTY of new size (skip if app is closing)
                             if (!isAppClosing) {
@@ -2232,8 +2433,9 @@ window.addEventListener('pywebviewready', () => {
 
                             lastCols = size.cols;
                             lastRows = size.rows;
+                            lastResizeTime = now;
                         }
-                    }, 100); // Wait 100ms for resize to settle
+                    }, 150); // Wait 150ms for resize to settle (increased from 100ms)
                 }
             });
             resizeObserver.observe(terminalContainer);
@@ -2371,4 +2573,560 @@ window.addEventListener('pywebviewready', () => {
     appendConsole('Type "help" for available commands', 'info');
 
     console.log('Manim Studio Desktop initialized');
+});
+
+// ============================================================================
+// NOTIFICATION HELPER
+// ============================================================================
+
+function showNotification(title, message, type = 'info') {
+    // Use console for debugging
+    console.log(`[NOTIFICATION] ${type}: ${title} - ${message}`);
+
+    // Show desktop notification if available
+    if ('Notification' in window && Notification.permission === 'granted') {
+        new Notification(title, {
+            body: message,
+            icon: type === 'success' ? '✓' : type === 'error' ? '✗' : 'ℹ'
+        });
+    }
+
+    // Also show a toast-style notification in the UI
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    toast.innerHTML = `
+        <div class="toast-icon">
+            ${type === 'success' ? '<i class="fas fa-check-circle"></i>' :
+              type === 'error' ? '<i class="fas fa-exclamation-circle"></i>' :
+              '<i class="fas fa-info-circle"></i>'}
+        </div>
+        <div class="toast-content">
+            <div class="toast-title">${title}</div>
+            <div class="toast-message">${message}</div>
+        </div>
+    `;
+
+    document.body.appendChild(toast);
+
+    // Animate in
+    setTimeout(() => toast.classList.add('show'), 10);
+
+    // Remove after 4 seconds
+    setTimeout(() => {
+        toast.classList.remove('show');
+        setTimeout(() => toast.remove(), 300);
+    }, 4000);
+}
+
+// Request notification permission on load
+if ('Notification' in window && Notification.permission === 'default') {
+    Notification.requestPermission();
+}
+
+// ============================================================================
+// ASSETS UPLOAD AND DRAG-DROP
+// ============================================================================
+
+window.uploadAssets = async function() {
+    try {
+        const result = await pywebview.api.select_files_to_upload();
+
+        if (result.status === 'success' && result.file_paths.length > 0) {
+            const uploadResult = await pywebview.api.upload_assets(result.file_paths);
+
+            if (uploadResult.status === 'success') {
+                showNotification('Upload Complete', uploadResult.message, 'success');
+                refreshAssets();
+            } else if (uploadResult.status === 'partial') {
+                showNotification('Upload Partial', uploadResult.message, 'info');
+                refreshAssets();
+            } else {
+                showNotification('Upload Failed', uploadResult.message, 'error');
+            }
+        }
+    } catch (error) {
+        console.error('[UPLOAD ERROR]', error);
+        showNotification('Upload Error', error.message, 'error');
+    }
+}
+
+// Setup drag and drop for assets
+document.addEventListener('DOMContentLoaded', () => {
+    const dropzone = document.getElementById('assetsDropzone');
+
+    if (dropzone) {
+        // Prevent default drag behaviors on dropzone only
+        dropzone.addEventListener('dragenter', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            dropzone.classList.add('dragover');
+        }, false);
+
+        dropzone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            dropzone.classList.add('dragover');
+        }, false);
+
+        dropzone.addEventListener('dragleave', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            dropzone.classList.remove('dragover');
+        }, false);
+
+        // Handle dropped files
+        dropzone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            dropzone.classList.remove('dragover');
+            handleDrop(e);
+        }, false);
+
+        // Prevent browser from opening dropped files outside the dropzone
+        document.body.addEventListener('dragover', (e) => {
+            // Only prevent if not over the dropzone
+            if (e.target !== dropzone && !dropzone.contains(e.target)) {
+                e.preventDefault();
+            }
+        }, false);
+
+        document.body.addEventListener('drop', (e) => {
+            // Only prevent if not over the dropzone
+            if (e.target !== dropzone && !dropzone.contains(e.target)) {
+                e.preventDefault();
+            }
+        }, false);
+    }
+});
+
+async function handleDrop(e) {
+    const dt = e.dataTransfer;
+    const files = dt.files;
+
+    if (files.length > 0) {
+        console.log(`[DRAG-DROP] ${files.length} files dropped`);
+
+        // Try to get file paths (works in some environments like Electron/PyWebView)
+        const filePaths = [];
+        let hasFilePaths = false;
+
+        for (let i = 0; i < files.length; i++) {
+            const file = files[i];
+            console.log('[DRAG-DROP] File:', file.name, 'Path:', file.path, 'Type:', file.type);
+
+            // Check if we have actual file system paths
+            if (file.path && file.path !== file.name) {
+                filePaths.push(file.path);
+                hasFilePaths = true;
+            }
+        }
+
+        if (hasFilePaths && filePaths.length > 0) {
+            // We have file paths - use the backend upload method
+            console.log('[DRAG-DROP] Using file paths:', filePaths);
+            try {
+                const uploadResult = await pywebview.api.upload_assets(filePaths);
+
+                if (uploadResult.status === 'success') {
+                    showNotification('Upload Complete', uploadResult.message, 'success');
+                    console.log('[DRAG-DROP] Upload successful, calling loadAssets()...');
+                    // Call the same function as the refresh button
+                    if (window.loadAssets) {
+                        await window.loadAssets();
+                    }
+                } else if (uploadResult.status === 'partial') {
+                    showNotification('Upload Partial', uploadResult.message, 'info');
+                    console.log('[DRAG-DROP] Upload partial, calling loadAssets()...');
+                    // Call the same function as the refresh button
+                    if (window.loadAssets) {
+                        await window.loadAssets();
+                    }
+                } else {
+                    showNotification('Upload Failed', uploadResult.message, 'error');
+                }
+            } catch (error) {
+                console.error('[DRAG-DROP ERROR]', error);
+                showNotification('Upload Error', error.message, 'error');
+            }
+        } else {
+            // No file paths available - need to read file contents and upload
+            console.log('[DRAG-DROP] No file paths - reading file contents');
+
+            try {
+                const uploadPromises = [];
+
+                for (let i = 0; i < files.length; i++) {
+                    const file = files[i];
+                    uploadPromises.push(uploadFileContent(file));
+                }
+
+                const results = await Promise.all(uploadPromises);
+                const successCount = results.filter(r => r === true).length;
+                const failCount = results.length - successCount;
+
+                if (successCount > 0 && failCount === 0) {
+                    showNotification('Upload Complete', `Successfully uploaded ${successCount} file(s)`, 'success');
+                    console.log('[DRAG-DROP] Upload successful, calling loadAssets()...');
+                    // Call the same function as the refresh button
+                    if (window.loadAssets) {
+                        await window.loadAssets();
+                    }
+                } else if (successCount > 0 && failCount > 0) {
+                    showNotification('Upload Partial', `Uploaded ${successCount} file(s), ${failCount} failed`, 'info');
+                    console.log('[DRAG-DROP] Upload partial, calling loadAssets()...');
+                    // Call the same function as the refresh button
+                    if (window.loadAssets) {
+                        await window.loadAssets();
+                    }
+                } else {
+                    showNotification('Upload Failed', 'All uploads failed', 'error');
+                }
+            } catch (error) {
+                console.error('[DRAG-DROP ERROR]', error);
+                showNotification('Upload Error', error.message, 'error');
+            }
+        }
+    }
+}
+
+async function uploadFileContent(file) {
+    return new Promise((resolve) => {
+        const reader = new FileReader();
+
+        reader.onload = async function(e) {
+            try {
+                const base64Content = e.target.result.split(',')[1]; // Remove data URL prefix
+                const result = await pywebview.api.upload_file_content(file.name, base64Content);
+
+                if (result.status === 'success') {
+                    console.log(`[UPLOAD] Successfully uploaded ${file.name}`);
+                    resolve(true);
+                } else {
+                    console.error(`[UPLOAD] Failed to upload ${file.name}:`, result.message);
+                    resolve(false);
+                }
+            } catch (error) {
+                console.error(`[UPLOAD ERROR] ${file.name}:`, error);
+                resolve(false);
+            }
+        };
+
+        reader.onerror = function() {
+            console.error(`[UPLOAD ERROR] Failed to read ${file.name}`);
+            resolve(false);
+        };
+
+        reader.readAsDataURL(file);
+    });
+}
+
+// ============================================================================
+// PACKAGE MANAGEMENT FUNCTIONS
+// ============================================================================
+
+let cachedUpdates = null; // Cache updates to avoid checking every time
+
+async function refreshPackages(checkUpdates = false) {
+    console.log('[VENV] Refreshing package list...');
+    const packagesList = document.getElementById('packagesList');
+
+    // Show loading
+    packagesList.innerHTML = `
+        <div class="venv-loading">
+            <i class="fas fa-spinner fa-spin"></i> Loading packages...
+        </div>
+    `;
+
+    try {
+        // Get installed packages
+        const packagesResult = await pywebview.api.get_installed_packages();
+
+        // Only check for updates if explicitly requested
+        let updatesResult = { status: 'success', updates: cachedUpdates || [] };
+        if (checkUpdates) {
+            updatesResult = await pywebview.api.check_package_updates();
+            cachedUpdates = updatesResult.updates || [];
+        }
+
+        console.log('[VENV] Package list result:', packagesResult);
+        console.log('[VENV] Updates result:', updatesResult);
+
+        if (packagesResult.status === 'success' && packagesResult.packages && packagesResult.packages.length > 0) {
+            // Create a map of packages with updates (including safety info)
+            const updatesMap = {};
+            if (updatesResult.status === 'success' && updatesResult.updates) {
+                updatesResult.updates.forEach(update => {
+                    updatesMap[update.name] = {
+                        latest: update.latest_version,
+                        current: update.version,
+                        safe_to_update: update.safe_to_update !== false,  // Default to true if not specified
+                        warning: update.warning || null,
+                        is_critical: update.is_critical || false
+                    };
+                });
+            }
+
+            // Build package list HTML
+            let html = '';
+            packagesResult.packages.forEach(pkg => {
+                const isCritical = ['pip', 'setuptools', 'wheel', 'manim', 'manim-fonts'].includes(pkg.name.toLowerCase());
+                const hasUpdate = updatesMap[pkg.name];
+
+                html += `
+                    <div class="package-item ${hasUpdate ? 'has-update' : ''} ${hasUpdate && !hasUpdate.safe_to_update ? 'has-warning' : ''}">
+                        <div class="package-info">
+                            <div class="package-name">
+                                ${pkg.name}
+                                ${hasUpdate && hasUpdate.is_critical ? '<span style="color: #ef4444; margin-left: 6px;" title="Critical for Manim"><i class="fas fa-exclamation-triangle"></i></span>' : ''}
+                                ${hasUpdate ? '<span class="package-update-badge"><i class="fas fa-arrow-up"></i> Update available</span>' : ''}
+                            </div>
+                            <div class="package-version">
+                                v${pkg.version}
+                                ${hasUpdate ? `<span class="package-latest"> → v${hasUpdate.latest}</span>` : ''}
+                            </div>
+                            ${hasUpdate && hasUpdate.warning ? `
+                                <div style="margin-top: 6px; padding: 6px 10px; background: rgba(239, 68, 68, 0.1); border-left: 3px solid #ef4444; border-radius: 4px; font-size: 12px; color: #ef4444;">
+                                    ${hasUpdate.warning}
+                                </div>
+                            ` : ''}
+                        </div>
+                        <div class="package-actions">
+                            ${hasUpdate ? `
+                                <button
+                                    class="package-btn package-btn-update ${!hasUpdate.safe_to_update ? 'package-btn-warning' : ''}"
+                                    onclick="updatePackage('${pkg.name}', ${!hasUpdate.safe_to_update})"
+                                    title="${!hasUpdate.safe_to_update ? 'Warning: May affect Manim compatibility' : 'Update to latest version'}"
+                                >
+                                    <i class="fas ${!hasUpdate.safe_to_update ? 'fa-exclamation-triangle' : 'fa-arrow-up'}"></i> Update
+                                </button>
+                            ` : ''}
+                            <button
+                                class="package-btn package-btn-uninstall"
+                                onclick="uninstallPackage('${pkg.name}')"
+                                ${isCritical ? 'disabled title="Cannot uninstall critical package"' : ''}
+                            >
+                                <i class="fas fa-trash"></i> Uninstall
+                            </button>
+                        </div>
+                    </div>
+                `;
+            });
+            packagesList.innerHTML = html;
+        } else if (packagesResult.status === 'error') {
+            packagesList.innerHTML = `
+                <div class="venv-empty">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    <p>${packagesResult.message || 'Failed to load packages'}</p>
+                </div>
+            `;
+        } else {
+            packagesList.innerHTML = `
+                <div class="venv-empty">
+                    <i class="fas fa-box-open"></i>
+                    <p>No packages installed</p>
+                </div>
+            `;
+        }
+    } catch (error) {
+        console.error('[VENV ERROR]', error);
+        packagesList.innerHTML = `
+            <div class="venv-empty">
+                <i class="fas fa-exclamation-circle"></i>
+                <p>Error loading packages: ${error.message}</p>
+            </div>
+        `;
+    }
+}
+
+async function installPackage() {
+    const input = document.getElementById('packageNameInput');
+    const packageName = input.value.trim();
+
+    if (!packageName) {
+        showNotification('Input Required', 'Please enter a package name', 'error');
+        return;
+    }
+
+    console.log(`[VENV] Checking dependencies for: ${packageName}`);
+
+    // Disable install button and show checking status
+    const installBtn = document.querySelector('.venv-btn-primary');
+    const originalHTML = installBtn.innerHTML;
+    installBtn.disabled = true;
+    installBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Checking...';
+
+    try {
+        // First, check for dependencies and conflicts
+        const checkResult = await pywebview.api.check_package_dependencies(packageName);
+        console.log('[VENV] Dependency check result:', checkResult);
+
+        if (checkResult.status === 'error') {
+            showNotification('Check Failed', checkResult.message, 'error');
+            installBtn.disabled = false;
+            installBtn.innerHTML = originalHTML;
+            return;
+        }
+
+        // If there are conflicts with critical packages, show warning
+        if (checkResult.has_conflicts) {
+            const conflictNames = checkResult.conflicts.map(c => c.name).join(', ');
+            const message = `⚠️ WARNING: This package will modify critical Manim dependencies:\n\n${conflictNames}\n\nThis may break Manim functionality. Do you want to continue?`;
+
+            if (!confirm(message)) {
+                showNotification('Installation Cancelled', 'Installation cancelled by user', 'info');
+                installBtn.disabled = false;
+                installBtn.innerHTML = originalHTML;
+                return;
+            }
+        }
+
+        // If there are warnings, show them
+        if (checkResult.warnings && checkResult.warnings.length > 0) {
+            const warningMsg = `⚠️ Warnings:\n${checkResult.warnings.join('\n')}\n\nContinue with installation?`;
+            if (!confirm(warningMsg)) {
+                showNotification('Installation Cancelled', 'Installation cancelled by user', 'info');
+                installBtn.disabled = false;
+                installBtn.innerHTML = originalHTML;
+                return;
+            }
+        }
+
+        // Show dependencies that will be installed
+        if (checkResult.dependencies && checkResult.dependencies.length > 1) {
+            const depList = checkResult.dependencies.map(d => `${d.name} ${d.version}`).join(', ');
+            console.log(`[VENV] Will install: ${depList}`);
+        }
+
+        // Proceed with installation
+        installBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Installing...';
+        console.log(`[VENV] Installing package: ${packageName}`);
+
+        const result = await pywebview.api.install_package(packageName);
+        console.log('[VENV] Install result:', result);
+
+        if (result.status === 'success') {
+            input.value = ''; // Clear input
+            showNotification('Package Installed', `Successfully installed ${packageName}`, 'success');
+            // Refresh without checking updates (faster)
+            await refreshPackages(false);
+        } else {
+            showNotification('Installation Failed', result.message, 'error');
+        }
+    } catch (error) {
+        console.error('[VENV ERROR]', error);
+        showNotification('Installation Error', error.message, 'error');
+    } finally {
+        // Re-enable install button
+        installBtn.disabled = false;
+        installBtn.innerHTML = originalHTML;
+    }
+}
+
+async function updatePackage(packageName, hasWarning = false) {
+    console.log(`[VENV] Updating package: ${packageName}, hasWarning: ${hasWarning}`);
+
+    // If there's a warning, show confirmation dialog
+    if (hasWarning) {
+        const message = `⚠️ WARNING: Updating ${packageName} may affect Manim compatibility.\n\nThis update could potentially break Manim functionality.\n\nDo you want to continue?`;
+        if (!confirm(message)) {
+            console.log('[VENV] Update cancelled by user');
+            showNotification('Update Cancelled', 'Update cancelled by user', 'info');
+            return;
+        }
+    }
+
+    // Find and disable the update button for this package
+    const buttons = document.querySelectorAll('.package-btn-update');
+    let targetButton = null;
+    buttons.forEach(btn => {
+        if (btn.getAttribute('onclick').includes(packageName)) {
+            targetButton = btn;
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Updating...';
+        }
+    });
+
+    try {
+        const result = await pywebview.api.update_package(packageName);
+        console.log('[VENV] Update result:', result);
+
+        if (result.status === 'success') {
+            showNotification('Package Updated', `Successfully updated ${packageName}`, 'success');
+            // Refresh and check for more updates (in case dependencies were updated)
+            await refreshPackages(true);
+        } else {
+            showNotification('Update Failed', result.message, 'error');
+            if (targetButton) {
+                targetButton.disabled = false;
+                const icon = hasWarning ? 'fa-exclamation-triangle' : 'fa-arrow-up';
+                targetButton.innerHTML = `<i class="fas ${icon}"></i> Update`;
+            }
+        }
+    } catch (error) {
+        console.error('[VENV ERROR]', error);
+        showNotification('Update Error', error.message, 'error');
+        if (targetButton) {
+            targetButton.disabled = false;
+            targetButton.innerHTML = '<i class="fas fa-arrow-up"></i> Update';
+        }
+    }
+}
+
+async function uninstallPackage(packageName) {
+    if (!confirm(`Are you sure you want to uninstall ${packageName}?`)) {
+        return;
+    }
+
+    console.log(`[VENV] Uninstalling package: ${packageName}`);
+
+    // Find and disable the uninstall button for this package
+    const buttons = document.querySelectorAll('.package-btn-uninstall');
+    let targetButton = null;
+    buttons.forEach(btn => {
+        if (btn.getAttribute('onclick').includes(packageName)) {
+            targetButton = btn;
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Removing...';
+        }
+    });
+
+    try {
+        const result = await pywebview.api.uninstall_package(packageName);
+        console.log('[VENV] Uninstall result:', result);
+
+        if (result.status === 'success') {
+            showNotification('Package Removed', `Successfully uninstalled ${packageName}`, 'success');
+            // Refresh without checking updates (faster)
+            await refreshPackages(false);
+        } else {
+            showNotification('Uninstall Failed', result.message, 'error');
+            if (targetButton) {
+                targetButton.disabled = false;
+                targetButton.innerHTML = '<i class="fas fa-trash"></i> Uninstall';
+            }
+        }
+    } catch (error) {
+        console.error('[VENV ERROR]', error);
+        showNotification('Uninstall Error', error.message, 'error');
+        if (targetButton) {
+            targetButton.disabled = false;
+            targetButton.innerHTML = '<i class="fas fa-trash"></i> Uninstall';
+        }
+    }
+}
+
+// Auto-refresh packages when venv tab is opened (first time only)
+let venvTabLoaded = false;
+document.addEventListener('DOMContentLoaded', () => {
+    const tabPills = document.querySelectorAll('.tab-pill');
+    tabPills.forEach(pill => {
+        pill.addEventListener('click', () => {
+            const tabName = pill.getAttribute('data-tab');
+            if (tabName === 'venv' && !venvTabLoaded) {
+                // Load packages list only (no update check) when tab is first opened
+                venvTabLoaded = true;
+                refreshPackages(false);
+            }
+        });
+    });
 });

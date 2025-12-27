@@ -204,8 +204,29 @@
         }
 
         #terminalContainer .xterm-viewport {
-            overflow-y: scroll !important;
+            overflow-y: auto !important; /* Changed from scroll to auto for better UX */
+            overflow-x: hidden !important;
             width: 100% !important;
+            scrollbar-width: thin; /* For Firefox */
+            scrollbar-color: #555 #222; /* For Firefox */
+        }
+
+        /* Custom scrollbar for webkit browsers */
+        #terminalContainer .xterm-viewport::-webkit-scrollbar {
+            width: 10px;
+        }
+
+        #terminalContainer .xterm-viewport::-webkit-scrollbar-track {
+            background: #222;
+        }
+
+        #terminalContainer .xterm-viewport::-webkit-scrollbar-thumb {
+            background: #555;
+            border-radius: 5px;
+        }
+
+        #terminalContainer .xterm-viewport::-webkit-scrollbar-thumb:hover {
+            background: #777;
         }
 
         #terminalContainer .xterm-screen {
@@ -346,7 +367,7 @@
             <div class="logo">🎬</div>
             <div class="title-section">
                 <h1 class="app-title">Manim Animation Studio</h1>
-                <span class="app-subtitle">Professional Edition v1.0.4.0</span>
+                <span class="app-subtitle">Professional Edition v1.0.7.0</span>
             </div>
             <div class="autosave-indicator" id="autosaveIndicator">
                 <i class="fas fa-check-circle"></i>
@@ -406,6 +427,7 @@
                     <button class="tab-pill active" data-tab="workspace"><i class="fas fa-desktop"></i> Workspace</button>
                     <button class="tab-pill" data-tab="system"><i class="fas fa-info-circle"></i> System</button>
                     <button class="tab-pill" data-tab="assets"><i class="fas fa-images"></i> Assets</button>
+                    <button class="tab-pill" data-tab="venv"><i class="fas fa-box"></i> Packages</button>
                 </div>
 
                 <div class="tab-panel active" id="workspace-panel">
@@ -549,9 +571,9 @@
                                     </div>
                                     <div class="sidebar-control" id="previewCustomResolutionDiv" style="display: none;">
                                         <label>Width</label>
-                                        <input type="number" id="previewCustomWidth" placeholder="1920" min="1" value="1920">
+                                        <input type="text" id="previewCustomWidth" placeholder="1920" value="1920">
                                         <label style="margin-top: 8px;">Height</label>
-                                        <input type="number" id="previewCustomHeight" placeholder="1080" min="1" value="1080">
+                                        <input type="text" id="previewCustomHeight" placeholder="1080" value="1080">
                                     </div>
                                     <div class="sidebar-control">
                                         <label>FPS</label>
@@ -565,7 +587,7 @@
                                     </div>
                                     <div class="sidebar-control" id="previewCustomFpsDiv" style="display: none;">
                                         <label>Custom FPS</label>
-                                        <input type="number" id="previewCustomFps" placeholder="30" min="1" max="240" value="30">
+                                        <input type="text" id="previewCustomFps" placeholder="30" value="30">
                                     </div>
                                 </div>
                             </div>
@@ -580,7 +602,6 @@
                                     <div class="sidebar-control">
                                         <label>Quality</label>
                                         <select id="qualitySelect">
-                                            <option value="16K">16K</option>
                                             <option value="8K">8K</option>
                                             <option value="4K">4K</option>
                                             <option value="1440p">1440p</option>
@@ -592,9 +613,9 @@
                                     </div>
                                     <div class="sidebar-control" id="customResolutionDiv" style="display: none;">
                                         <label>Width</label>
-                                        <input type="number" id="customWidth" placeholder="1920" min="1" value="1920">
+                                        <input type="text" id="customWidth" placeholder="1920" value="1920">
                                         <label style="margin-top: 8px;">Height</label>
-                                        <input type="number" id="customHeight" placeholder="1080" min="1" value="1080">
+                                        <input type="text" id="customHeight" placeholder="1080" value="1080">
                                     </div>
                                     <div class="sidebar-control">
                                         <label>FPS</label>
@@ -608,7 +629,7 @@
                                     </div>
                                     <div class="sidebar-control" id="customFpsDiv" style="display: none;">
                                         <label>Custom FPS</label>
-                                        <input type="number" id="customFps" placeholder="30" min="1" max="240" value="30">
+                                        <input type="text" id="customFps" placeholder="30" value="30">
                                     </div>
                                     <div class="sidebar-control">
                                         <label>Format</label>
@@ -680,38 +701,534 @@
                     </div>
                 </div>
 
-                <!-- SIMPLE ASSETS TAB -->
+                <!-- ASSETS TAB - Modern Design -->
                 <div class="tab-panel" id="assets-panel">
-                    <div class="panel-heading">
-                        <h2><i class="fas fa-images"></i> Assets</h2>
-                        <button class="small-btn" onclick="window.loadAssets()">
-                            <i class="fas fa-sync"></i> Refresh
-                        </button>
-                    </div>
+                    <style>
+                        /* Assets Tab - Premium Glassmorphism Design */
+                        .assets-container {
+                            display: flex;
+                            flex-direction: column;
+                            height: 100%;
+                            background: linear-gradient(135deg, #0a0a0f 0%, #12121a 100%);
+                            padding: 20px;
+                            gap: 20px;
+                            overflow: hidden;
+                        }
 
-                    <!-- Assets Layout: List on left, Preview on right -->
-                    <div style="display: flex; height: calc(100% - 60px); gap: 20px; padding: 20px;">
-                        <!-- Left: File List -->
-                        <div style="flex: 1; overflow: auto;">
-                            <button onclick="window.uploadAssets()" style="width: 100%; padding: 40px; background: var(--bg-secondary); border: 2px dashed var(--border-color); border-radius: 8px; color: var(--text-primary); font-size: 16px; cursor: pointer; margin-bottom: 20px;">
-                                <i class="fas fa-cloud-upload-alt" style="font-size: 32px; display: block; margin-bottom: 10px;"></i>
-                                Click to upload media files
-                            </button>
-                            <div id="simpleAssetsContainer"></div>
+                        /* Header with actions */
+                        .assets-header {
+                            display: flex;
+                            justify-content: space-between;
+                            align-items: center;
+                            animation: slideInDown 0.4s ease-out;
+                        }
+
+                        .assets-title {
+                            font-size: 28px;
+                            font-weight: 600;
+                            color: var(--text-primary);
+                            display: flex;
+                            align-items: center;
+                            gap: 12px;
+                        }
+
+                        .assets-title i {
+                            background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%);
+                            -webkit-background-clip: text;
+                            -webkit-text-fill-color: transparent;
+                            background-clip: text;
+                            font-size: 32px;
+                        }
+
+                        .assets-actions {
+                            display: flex;
+                            gap: 12px;
+                        }
+
+                        .assets-btn {
+                            padding: 10px 20px;
+                            background: rgba(99, 102, 241, 0.12);
+                            border: 1px solid rgba(99, 102, 241, 0.25);
+                            border-radius: 8px;
+                            color: #6366f1;
+                            font-size: 14px;
+                            font-weight: 600;
+                            cursor: pointer;
+                            transition: all 0.3s ease;
+                            display: flex;
+                            align-items: center;
+                            gap: 8px;
+                        }
+
+                        .assets-btn:hover {
+                            background: rgba(99, 102, 241, 0.2);
+                            border-color: rgba(99, 102, 241, 0.45);
+                            transform: translateY(-2px);
+                            box-shadow: 0 4px 15px rgba(99, 102, 241, 0.35);
+                        }
+
+                        /* Drag and Drop Upload Zone - Premium */
+                        .assets-dropzone {
+                            background: rgba(99, 102, 241, 0.03);
+                            backdrop-filter: blur(12px);
+                            border: 2px dashed rgba(99, 102, 241, 0.25);
+                            border-radius: 12px;
+                            padding: 16px 24px;
+                            display: flex;
+                            align-items: center;
+                            gap: 16px;
+                            cursor: pointer;
+                            transition: all 0.3s ease;
+                            position: relative;
+                            overflow: hidden;
+                        }
+
+                        .assets-dropzone::before {
+                            content: '';
+                            position: absolute;
+                            top: 0;
+                            left: 0;
+                            right: 0;
+                            bottom: 0;
+                            background: linear-gradient(90deg, rgba(99, 102, 241, 0.08) 0%, rgba(168, 85, 247, 0.05) 100%);
+                            opacity: 0;
+                            transition: opacity 0.3s ease;
+                        }
+
+                        .assets-dropzone:hover::before {
+                            opacity: 1;
+                        }
+
+                        .assets-dropzone:hover {
+                            border-color: rgba(99, 102, 241, 0.5);
+                            background: rgba(99, 102, 241, 0.06);
+                        }
+
+                        .assets-dropzone.dragover {
+                            border-color: #6366f1;
+                            background: rgba(99, 102, 241, 0.1);
+                            box-shadow: 0 0 25px rgba(99, 102, 241, 0.25);
+                        }
+
+                        .assets-dropzone.dragover::before {
+                            opacity: 1;
+                        }
+
+                        .dropzone-icon {
+                            font-size: 32px;
+                            background: linear-gradient(135deg, #6366f1 0%, #a855f7 100%);
+                            -webkit-background-clip: text;
+                            -webkit-text-fill-color: transparent;
+                            background-clip: text;
+                            flex-shrink: 0;
+                        }
+
+                        .dropzone-content {
+                            flex: 1;
+                            text-align: left;
+                        }
+
+                        .dropzone-text {
+                            font-size: 15px;
+                            font-weight: 600;
+                            color: var(--text-primary);
+                            margin-bottom: 4px;
+                        }
+
+                        .dropzone-hint {
+                            font-size: 12px;
+                            color: var(--text-secondary);
+                        }
+
+                        /* Main content area */
+                        .assets-content {
+                            display: flex;
+                            gap: 20px;
+                            flex: 1;
+                            min-height: 0;
+                        }
+
+                        /* Files table/column view */
+                        .assets-files {
+                            flex: 1;
+                            overflow-y: auto;
+                            background: rgba(255, 255, 255, 0.03);
+                            backdrop-filter: blur(10px);
+                            border: 1px solid rgba(255, 255, 255, 0.1);
+                            border-radius: 12px;
+                            padding: 0;
+                        }
+
+                        .assets-table {
+                            width: 100%;
+                        }
+
+                        /* Table header */
+                        .assets-table-header {
+                            display: flex;
+                            align-items: center;
+                            padding: 16px 20px;
+                            background: rgba(255, 255, 255, 0.05);
+                            border-bottom: 2px solid rgba(255, 255, 255, 0.1);
+                            position: sticky;
+                            top: 0;
+                            z-index: 10;
+                            backdrop-filter: blur(10px);
+                        }
+
+                        .assets-table-header > div {
+                            font-size: 11px;
+                            font-weight: 700;
+                            color: var(--text-secondary);
+                            text-transform: uppercase;
+                            letter-spacing: 1px;
+                        }
+
+                        /* Table row */
+                        .asset-row {
+                            display: flex;
+                            align-items: center;
+                            padding: 12px 20px;
+                            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+                            cursor: pointer;
+                            transition: all 0.2s ease;
+                            position: relative;
+                        }
+
+                        .asset-row::before {
+                            content: '';
+                            position: absolute;
+                            left: 0;
+                            top: 0;
+                            bottom: 0;
+                            width: 3px;
+                            background: var(--asset-color);
+                            opacity: 0;
+                            transition: opacity 0.2s ease;
+                        }
+
+                        .asset-row:hover {
+                            background: rgba(255, 255, 255, 0.05);
+                        }
+
+                        .asset-row:hover::before {
+                            opacity: 1;
+                        }
+
+                        .asset-row.video { --asset-color: #3b82f6; }
+                        .asset-row.image { --asset-color: #10b981; }
+                        .asset-row.audio { --asset-color: #8b5cf6; }
+                        .asset-row.font { --asset-color: #f59e0b; }
+
+                        /* Column widths */
+                        .asset-col-preview {
+                            width: 50px;
+                            flex-shrink: 0;
+                        }
+
+                        .asset-col-name {
+                            flex: 1;
+                            min-width: 200px;
+                            padding-right: 16px;
+                        }
+
+                        .asset-col-type {
+                            width: 140px;
+                            flex-shrink: 0;
+                        }
+
+                        .asset-col-size {
+                            width: 100px;
+                            flex-shrink: 0;
+                        }
+
+                        .asset-col-actions {
+                            width: 180px;
+                            flex-shrink: 0;
+                            text-align: right;
+                        }
+
+                        /* Preview thumbnail/icon */
+                        .asset-preview {
+                            width: 40px;
+                            height: 40px;
+                            display: flex;
+                            align-items: center;
+                            justify-content: center;
+                            background: rgba(0, 0, 0, 0.3);
+                            border-radius: 6px;
+                            font-size: 20px;
+                            color: var(--asset-color);
+                        }
+
+                        .asset-thumbnail {
+                            width: 40px;
+                            height: 40px;
+                            object-fit: cover;
+                            border-radius: 6px;
+                        }
+
+                        /* Name column */
+                        .asset-name {
+                            font-size: 14px;
+                            font-weight: 600;
+                            color: var(--text-primary);
+                            overflow: hidden;
+                            text-overflow: ellipsis;
+                            white-space: nowrap;
+                        }
+
+                        /* Type column */
+                        .asset-type {
+                            font-size: 12px;
+                            color: var(--text-secondary);
+                        }
+
+                        /* Size column */
+                        .asset-size {
+                            font-size: 12px;
+                            color: var(--text-secondary);
+                        }
+
+                        /* Actions column */
+                        .asset-actions {
+                            display: flex;
+                            gap: 8px;
+                            justify-content: flex-end;
+                        }
+
+                        .asset-action-btn {
+                            padding: 6px 12px;
+                            background: rgba(255, 255, 255, 0.05);
+                            border: 1px solid rgba(255, 255, 255, 0.1);
+                            border-radius: 6px;
+                            color: var(--text-primary);
+                            font-size: 11px;
+                            font-weight: 600;
+                            cursor: pointer;
+                            transition: all 0.2s ease;
+                            display: flex;
+                            align-items: center;
+                            gap: 4px;
+                        }
+
+                        .asset-action-btn:hover {
+                            background: rgba(255, 255, 255, 0.1);
+                            border-color: rgba(255, 255, 255, 0.2);
+                            transform: translateY(-1px);
+                        }
+
+                        .asset-action-btn.delete {
+                            color: #ef4444;
+                        }
+
+                        .asset-action-btn.delete:hover {
+                            background: rgba(239, 68, 68, 0.2);
+                            border-color: rgba(239, 68, 68, 0.5);
+                        }
+
+                        /* Preview panel */
+                        .assets-preview {
+                            flex: 0 0 400px;
+                            background: rgba(255, 255, 255, 0.03);
+                            backdrop-filter: blur(10px);
+                            border: 1px solid rgba(255, 255, 255, 0.1);
+                            border-radius: 12px;
+                            padding: 20px;
+                            display: flex;
+                            flex-direction: column;
+                            gap: 16px;
+                        }
+
+                        .preview-header {
+                            display: flex;
+                            align-items: center;
+                            gap: 12px;
+                            padding-bottom: 16px;
+                            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+                        }
+
+                        .preview-header i {
+                            font-size: 24px;
+                            color: #3b82f6;
+                        }
+
+                        .preview-header h3 {
+                            font-size: 18px;
+                            font-weight: 600;
+                            color: var(--text-primary);
+                            margin: 0;
+                        }
+
+                        .preview-content {
+                            flex: 1;
+                            background: rgba(0, 0, 0, 0.3);
+                            border-radius: 8px;
+                            display: flex;
+                            align-items: center;
+                            justify-content: center;
+                            overflow: hidden;
+                            position: relative;
+                        }
+
+                        .preview-placeholder {
+                            text-align: center;
+                            color: var(--text-secondary);
+                        }
+
+                        .preview-placeholder i {
+                            font-size: 64px;
+                            margin-bottom: 16px;
+                            opacity: 0.3;
+                        }
+
+                        .preview-info {
+                            padding: 12px;
+                            background: rgba(255, 255, 255, 0.05);
+                            border-radius: 8px;
+                            font-size: 13px;
+                            color: var(--text-secondary);
+                            text-align: center;
+                            word-break: break-word;
+                        }
+
+                        /* Empty state */
+                        .assets-empty {
+                            text-align: center;
+                            padding: 60px 20px;
+                            color: var(--text-secondary);
+                        }
+
+                        .assets-empty i {
+                            font-size: 80px;
+                            margin-bottom: 20px;
+                            opacity: 0.2;
+                        }
+
+                        .assets-empty p {
+                            font-size: 16px;
+                            margin: 0;
+                        }
+
+                        /* Scrollbar styling */
+                        .assets-files::-webkit-scrollbar {
+                            width: 8px;
+                        }
+
+                        .assets-files::-webkit-scrollbar-track {
+                            background: rgba(255, 255, 255, 0.05);
+                            border-radius: 4px;
+                        }
+
+                        .assets-files::-webkit-scrollbar-thumb {
+                            background: rgba(255, 255, 255, 0.2);
+                            border-radius: 4px;
+                        }
+
+                        .assets-files::-webkit-scrollbar-thumb:hover {
+                            background: rgba(255, 255, 255, 0.3);
+                        }
+                    </style>
+
+                    <div class="assets-container">
+                        <!-- Header -->
+                        <div class="assets-header">
+                            <div class="assets-title">
+                                <i class="fas fa-images"></i>
+                                Assets Library
+                            </div>
+                            <div class="assets-actions">
+                                <button class="assets-btn" onclick="window.loadAssets()">
+                                    <i class="fas fa-sync"></i>
+                                    Refresh
+                                </button>
+                            </div>
                         </div>
 
-                        <!-- Right: Preview Panel -->
-                        <div style="flex: 0 0 400px; background: var(--bg-secondary); border-radius: 8px; padding: 16px; display: flex; flex-direction: column;">
-                            <h3 style="margin: 0 0 12px 0; font-size: 16px; color: var(--text-primary);">
-                                <i class="fas fa-eye"></i> Preview
-                            </h3>
-                            <div id="assetsPreviewContainer" style="flex: 1; background: var(--bg-primary); border-radius: 6px; display: flex; align-items: center; justify-content: center; overflow: hidden;">
-                                <div style="text-align: center; color: var(--text-secondary);">
-                                    <i class="fas fa-image" style="font-size: 48px; margin-bottom: 12px; opacity: 0.3;"></i>
-                                    <p>Click a file to preview</p>
+                        <!-- Drag & Drop Upload Zone -->
+                        <div class="assets-dropzone" id="assetsDropzone" onclick="window.uploadAssets()">
+                            <div class="dropzone-icon">
+                                <i class="fas fa-cloud-upload-alt"></i>
+                            </div>
+                            <div class="dropzone-content">
+                                <div class="dropzone-text">Drag & Drop Files Here</div>
+                                <div class="dropzone-hint">or click to browse • Images, Videos, Audio, Fonts & More</div>
+                            </div>
+                        </div>
+
+                        <!-- Content Area -->
+                        <div class="assets-content">
+                            <!-- Files Table -->
+                            <div class="assets-files">
+                                <div class="assets-table">
+                                    <div class="assets-table-header">
+                                        <div class="asset-col-preview"></div>
+                                        <div class="asset-col-name">Name</div>
+                                        <div class="asset-col-type">Type</div>
+                                        <div class="asset-col-size">Size</div>
+                                        <div class="asset-col-actions">Actions</div>
+                                    </div>
+                                    <div id="simpleAssetsContainer"></div>
                                 </div>
                             </div>
-                            <div id="assetsPreviewInfo" style="margin-top: 12px; font-size: 13px; color: var(--text-secondary); text-align: center;"></div>
+
+                            <!-- Preview Panel -->
+                            <div class="assets-preview">
+                                <div class="preview-header">
+                                    <i class="fas fa-eye"></i>
+                                    <h3>Preview</h3>
+                                </div>
+                                <div class="preview-content" id="assetsPreviewContainer">
+                                    <div class="preview-placeholder">
+                                        <i class="fas fa-image"></i>
+                                        <p>Select a file to preview</p>
+                                    </div>
+                                </div>
+                                <div class="preview-info" id="assetsPreviewInfo"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Venv/Packages Tab -->
+                <div class="tab-panel" id="venv-panel">
+                    <div class="venv-container">
+                        <div class="venv-header">
+                            <h2><i class="fas fa-box"></i> Package Manager</h2>
+                            <div class="venv-header-actions">
+                                <button class="venv-btn" onclick="refreshPackages(true)" id="checkUpdatesBtn">
+                                    <i class="fas fa-download"></i> Check for Updates
+                                </button>
+                                <button class="venv-btn" onclick="refreshPackages(false)">
+                                    <i class="fas fa-sync-alt"></i> Refresh List
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Install Package Section -->
+                        <div class="venv-install-section">
+                            <h3>Install New Package</h3>
+                            <div class="venv-install-form">
+                                <input
+                                    type="text"
+                                    id="packageNameInput"
+                                    placeholder="Enter package name (e.g., numpy, matplotlib)"
+                                    onkeypress="if(event.key === 'Enter') installPackage()"
+                                />
+                                <button class="venv-btn-primary" onclick="installPackage()">
+                                    <i class="fas fa-download"></i> Install
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Installed Packages List -->
+                        <div class="venv-packages-section">
+                            <h3>Installed Packages</h3>
+                            <div class="venv-packages-list" id="packagesList">
+                                <div class="venv-loading">
+                                    <i class="fas fa-spinner fa-spin"></i> Loading packages...
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>
